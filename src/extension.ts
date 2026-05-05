@@ -15,6 +15,8 @@ import { AutoCodeCompletionProvider } from './providers/completion-provider';
 import { CommandHandlers } from './commands/command-handlers';
 import { PerformanceMonitor } from './performance/performance-monitor';
 import { SettingsPanel } from './settings/settings-panel';
+import { BuildAnalyzer } from './tools/build-analyzer';
+import { MultiFileCache } from './cache/multi-file-cache';
 
 let disposables: vscode.Disposable[] = [];
 
@@ -82,8 +84,16 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }));
 
-  setupDocumentListeners(contextEngine, predictionEngine);
+  // Initialize build analyzer
+  const multiFileCache = new MultiFileCache(200, 500, 30000, 300000);
+  const buildAnalyzer = new BuildAnalyzer(multiFileCache);
+  disposables.push(buildAnalyzer);
 
+  setupDocumentListeners(contextEngine, predictionEngine, eventBus);
+
+  // Add completion provider disposal
+  disposables.push(completionProvider);
+  
   disposables.push(logger, config, eventBus);
   context.subscriptions.push(...disposables);
 
@@ -128,13 +138,27 @@ export function deactivate(): void {
  */
 function setupDocumentListeners(
   contextEngine: ContextEngine,
-  _predictionEngine: PredictionEngine
+  _predictionEngine: PredictionEngine,
+  eventBus: EventBus
 ): void {
   const logger = Logger.getInstance();
 
   disposables.push(
     vscode.workspace.onDidSaveTextDocument((document) => {
       logger.debug(`File saved: ${document.fileName}`);
+      eventBus.emit({ type: 'file_saved', data: { uri: document.uri.toString() } });
+    })
+  );
+
+  disposables.push(
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      eventBus.emit({ 
+        type: 'file_modified', 
+        data: { 
+          uri: event.document.uri.toString(),
+          content: event.contentChanges.length > 0 ? event.contentChanges[0].text : undefined
+        } 
+      });
     })
   );
 

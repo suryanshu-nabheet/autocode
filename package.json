@@ -72,6 +72,18 @@
         "title": "AutoCode: Check Connection Status"
       },
       {
+        "command": "autocode.analyzeBuild",
+        "title": "AutoCode: Build Report"
+      },
+      {
+        "command": "autocode.optimizeExtension",
+        "title": "AutoCode: Optimize Extension"
+      },
+      {
+        "command": "autocode.analyzeProjectFiles",
+        "title": "AutoCode: Analyze Project Files"
+      },
+      {
         "command": "autocode.onCompletionAccepted",
         "title": "AutoCode: Completion Accepted (Internal)"
       }

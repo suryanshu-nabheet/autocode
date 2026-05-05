@@ -270,7 +270,12 @@ export type AutoCodeEvent =
   | { type: 'completion_accepted'; data: { id: string; partial: boolean } }
   | { type: 'completion_dismissed'; data: { id: string; reason: string; text?: string; file?: string; line?: number } }
   | { type: 'context_rebuilt'; data: { tokenCount: number; latencyMs: number } }
-  | { type: 'cache_hit'; data: { key: string } }
+  | { type: 'cache_hit'; data: { key: string; level?: number; crossFile?: boolean } }
+  | { type: 'file_modified'; data: { uri: string; content?: string } }
+  | { type: 'file_saved'; data: { uri: string } }
+  | { type: 'cursor_idle'; data: { file: string; position: vscode.Position; durationMs: number } }
+  | { type: 'proactive_suggestion'; data: { trigger: string; file: string } }
+  | { type: 'cross_file_context_loaded'; data: { files: string[]; totalTokens: number } }
   | { type: 'error'; data: { message: string; stack?: string } };
 
 /**

@@ -12,6 +12,9 @@ import { EventBus } from '../core/event-bus';
 import { ContextEngine } from '../context/context-engine';
 import { PredictionEngine } from '../prediction/prediction-engine';
 import { PerformanceMonitor } from '../performance/performance-monitor';
+import { MultiFileCache } from '../cache/multi-file-cache';
+import { ProactiveSuggester } from '../prediction/proactive-suggester';
+import { SmartPrefetcher } from '../performance/smart-prefetcher';
 
 /**
  * Provides inline completions for the AutoCode extension.
@@ -25,6 +28,9 @@ export class AutoCodeCompletionProvider
   private contextEngine: ContextEngine;
   private predictionEngine: PredictionEngine;
   private perfMonitor: PerformanceMonitor;
+  private multiFileCache: MultiFileCache;
+  private proactiveSuggester: ProactiveSuggester;
+  private smartPrefetcher: SmartPrefetcher;
 
   /** Currently shown completion (for partial acceptance) */
   private currentCompletion: CompletionResult | null = null;
@@ -51,6 +57,25 @@ export class AutoCodeCompletionProvider
     this.contextEngine = contextEngine;
     this.predictionEngine = predictionEngine;
     this.perfMonitor = perfMonitor;
+    
+    // Initialize advanced caching and proactive systems
+    this.multiFileCache = new MultiFileCache(200, 500, 30000, 300000);
+    this.smartPrefetcher = new SmartPrefetcher(
+      this.multiFileCache,
+      contextEngine,
+      predictionEngine
+    );
+    this.proactiveSuggester = new ProactiveSuggester(
+      this.multiFileCache,
+      (pos) => this.triggerAtPosition(pos)
+    );
+  }
+  
+  /**
+   * Trigger completion at specific position (for proactive suggester)
+   */
+  private triggerAtPosition(position: vscode.Position): void {
+    vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
   }
 
   /**
@@ -98,42 +123,93 @@ export class AutoCodeCompletionProvider
 
     this.lastPosition = position;
 
-    // 2. ULTRA-FAST PATH: Predictive Cache (Sub-millisecond)
-    const cacheKey = `${document.uri.toString()}:${position.line}:${linePrefix}`;
-    const cached = await this.predictionEngine.getCachedCompletion(cacheKey);
-    if (cached) {
-        this.logger.debug('Sub-millisecond cache hit');
-        this.currentCompletion = cached;
+    // 2. ULTRA-FAST PATH: Multi-File L1 Cache (Sub-millisecond)
+    const uri = document.uri.toString();
+    const l1Result = this.multiFileCache.get(uri, position, linePrefix, document.languageId);
+    
+    if (l1Result) {
+        this.logger.debug(`L${l1Result.level} cache hit in ${l1Result.metadata.latencyMs?.toFixed(2) ?? '<1'}ms`);
+        this.eventBus.emit({
+          type: 'cache_hit',
+          data: { key: `${uri}:${position.line}`, level: l1Result.level, crossFile: l1Result.metadata.crossFile }
+        });
+        this.currentCompletion = l1Result.result;
         this.acceptedOffset = 0;
-        this.schedulePrefetch(document, position);
-        return [this.createInlineItem(cached, position, document)];
+        
+        // Schedule smart prefetch for next positions
+        this.smartPrefetcher.schedulePrefetch(document, position, 'cache_hit');
+        return [this.createInlineItem(l1Result.result, position, document)];
     }
 
-    // 3. BACKGROUND TASK: Speculative Fetch
-    // We don't await this if we want sub-millisecond response for "null" results (to not block UI)
-    // But if we want to show a result, we have to wait.
-    // To satisfy the "not even a millisecond" requirement, we must have it prefetched.
-    
-    // Trigger background fetch for the CURRENT position if not cached
-    this.triggerBackgroundFetch(document, position, token);
+    // 3. CROSS-FILE PATTERN MATCH: Check similar patterns in related files
+    const relatedFiles = this.getRelatedFiles(document);
+    if (relatedFiles.length > 0) {
+        const crossFileResult = this.multiFileCache.findCrossFilePattern(
+            linePrefix,
+            document.languageId,
+            relatedFiles.map(f => f.toString())
+        );
+        
+        if (crossFileResult) {
+            this.logger.debug('Cross-file pattern match found');
+            this.eventBus.emit({
+              type: 'cache_hit',
+              data: { key: `${uri}:${position.line}`, level: 2, crossFile: true }
+            });
+            this.currentCompletion = crossFileResult;
+            this.acceptedOffset = 0;
+            return [this.createInlineItem(crossFileResult, position, document)];
+        }
+    }
 
-    // If we have a very fresh prefetch result from a previous trigger, use it
-    if (this.prefetchResult && this.prefetchResult.key === cacheKey) {
+    // 4. BACKGROUND TASK: Speculative Fetch with Smart Prefetcher
+    this.triggerBackgroundFetch(document, position, token, relatedFiles);
+
+    // 5. USE PREFETCHED RESULT if available
+    const prefetchKey = `${uri}:${position.line}:${linePrefix}`;
+    if (this.prefetchResult && this.prefetchResult.key === prefetchKey) {
         this.logger.debug('Using speculatively prefetched result');
         const res = this.prefetchResult.result;
         this.currentCompletion = res;
         this.acceptedOffset = 0;
-        this.schedulePrefetch(document, position);
+        
+        // Store in multi-file cache
+        this.multiFileCache.set(uri, position, linePrefix, document.languageId, res, relatedFiles.map(f => f.toString()));
+        
+        // Trigger smart prefetching for next positions
+        this.smartPrefetcher.schedulePrefetch(document, position, 'prefetch_hit');
         return [this.createInlineItem(res, position, document)];
     }
 
     return null;
   }
+  
+  /**
+   * Get related files for cross-file context
+   */
+  private getRelatedFiles(document: vscode.TextDocument): vscode.Uri[] {
+    const related: vscode.Uri[] = [];
+    const allDocs = vscode.workspace.textDocuments;
+    const currentDir = document.uri.toString().split('/').slice(0, -1).join('/');
+    
+    for (const doc of allDocs) {
+      if (doc === document || doc.isClosed) continue;
+      if (doc.languageId !== document.languageId) continue;
+      
+      const docDir = doc.uri.toString().split('/').slice(0, -1).join('/');
+      if (docDir === currentDir || docDir.startsWith(currentDir)) {
+        related.push(doc.uri);
+      }
+    }
+    
+    return related.slice(0, 5); // Limit to 5 related files
+  }
 
   private async triggerBackgroundFetch(
       document: vscode.TextDocument,
       position: vscode.Position,
-      token: vscode.CancellationToken
+      token: vscode.CancellationToken,
+      relatedFiles: vscode.Uri[] = []
   ): Promise<void> {
       const linePrefix = document.lineAt(position.line).text.substring(0, position.character);
       const fetchKey = `${document.uri.toString()}:${position.line}:${linePrefix}`;
@@ -149,7 +225,16 @@ export class AutoCodeCompletionProvider
       this.inFlightFetches.set(fetchKey, controller);
 
       try {
+          // Build context with cross-file awareness
           const projectContext = await this.contextEngine.buildContext(document, position, token);
+          
+          // Emit cross-file context loaded event
+          if (relatedFiles.length > 0) {
+              this.eventBus.emit({
+                  type: 'cross_file_context_loaded',
+                  data: { files: relatedFiles.map(f => f.toString()), totalTokens: 0 }
+              });
+          }
 
           // Check if cancelled during context build
           if (controller.signal.aborted || token.isCancellationRequested) {
@@ -160,12 +245,25 @@ export class AutoCodeCompletionProvider
 
           if (completion && !token.isCancellationRequested && !controller.signal.aborted) {
               this.prefetchResult = { key: fetchKey, result: completion };
+              
+              // Store in multi-file cache with dependencies
+              this.multiFileCache.set(
+                  document.uri.toString(),
+                  position,
+                  linePrefix,
+                  document.languageId,
+                  completion,
+                  relatedFiles.map(f => f.toString())
+              );
 
               // If the user is still at the same position, we can try to re-trigger VS Code
               const currentPos = vscode.window.activeTextEditor?.selection.active;
               if (currentPos && currentPos.isEqual(position)) {
                   vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
               }
+              
+              // Schedule smart prefetch for next positions
+              this.smartPrefetcher.schedulePrefetch(document, position, 'background_fetch');
           }
       } catch (err) {
           this.logger.debug('Background fetch failed', err);
@@ -297,48 +395,8 @@ export class AutoCodeCompletionProvider
     document: vscode.TextDocument,
     currentPosition: vscode.Position
   ): void {
-    if (!this.currentCompletion) {return;}
-
-    const insertText = this.currentCompletion.insertText;
-    const lines = insertText.split('\n');
-    const endLine = currentPosition.line + lines.length - 1;
-    const endChar =
-      lines.length === 1
-        ? currentPosition.character + insertText.length
-        : lines[lines.length - 1].length;
-
-    const nextPosition = new vscode.Position(endLine, endChar);
-
-    setTimeout(async () => {
-      try {
-        const cts = new vscode.CancellationTokenSource();
-        setTimeout(() => cts.cancel(), 5000);
-
-        const context = await this.contextEngine.buildContext(
-          document,
-          nextPosition,
-          cts.token
-        );
-
-        const result = await this.predictionEngine.getCompletion(
-          document,
-          nextPosition,
-          context,
-          cts.token
-        );
-
-        if (result) {
-          const prefetchLineText = document.lineAt(nextPosition.line).text;
-          const prefetchPrefix = prefetchLineText.substring(0, nextPosition.character);
-          const key = `${document.uri.toString()}:${nextPosition.line}:${prefetchPrefix}`;
-          this.prefetchResult = { key, result };
-        }
-
-        cts.dispose();
-      } catch (err) {
-        this.logger.debug('Prefetch failed', err);
-      }
-    }, 50);
+    // Delegate to smart prefetcher for advanced prefetching
+    this.smartPrefetcher.schedulePrefetch(document, currentPosition, 'completion_shown');
   }
 
   clearState(): void {
@@ -348,11 +406,25 @@ export class AutoCodeCompletionProvider
     }
     this.inFlightFetches.clear();
 
+    // Clear all caches and prefetchers
+    this.multiFileCache.clear();
+    this.smartPrefetcher.cancelAll();
+    
     this.currentCompletion = null;
     this.acceptedOffset = 0;
     this.lastPosition = null;
     this.prefetchResult = null;
     this.logger.info('Completion provider state cleared');
+  }
+  
+  /**
+   * Dispose all resources
+   */
+  dispose(): void {
+    this.clearState();
+    this.proactiveSuggester.dispose();
+    this.smartPrefetcher.dispose();
+    this.logger.info('Completion provider disposed');
   }
 
   private isExcludedLanguage(langId: string): boolean {
