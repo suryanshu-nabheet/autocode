@@ -26,6 +26,7 @@ export function activate(context: vscode.ExtensionContext): void {
   
   const logger = Logger.getInstance();
   const config = ConfigManager.getInstance();
+  ConfigManager.initialize(context.secrets);
   const eventBus = EventBus.getInstance();
 
   logger.setLevel(config.getValue('logLevel'));
@@ -144,8 +145,8 @@ function setupDocumentListeners(
         setTimeout(() => cts.cancel(), 5000);
         try {
             await contextEngine.buildContext(editor.document, editor.selection.active, cts.token);
-        } catch {
-            // Background update
+        } catch (err) {
+            logger.debug('Background context update failed', err);
         } finally {
             cts.dispose();
         }
@@ -153,7 +154,7 @@ function setupDocumentListeners(
     })
   );
 
-  let selectionTimer: NodeJS.Timeout | null = null;
+  let selectionTimer: ReturnType<typeof setTimeout> | null = null;
   disposables.push(
     vscode.window.onDidChangeTextEditorSelection((event) => {
       if (selectionTimer) {

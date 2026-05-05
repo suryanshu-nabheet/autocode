@@ -109,10 +109,11 @@ export class ContextEngine implements vscode.Disposable {
     const cursorContext = this.buildCursorContext(document, position);
     
     // 1. ULTRA-FAST PATH: Same line, small movement
-    const posKey = `${document.uri.toString()}:${position.line}`;
-    if (this.lastPosition && this.lastPosition.startsWith(posKey)) {
-        const lastChar = parseInt(this.lastPosition.split(':').pop() || '0');
-        if (Math.abs(position.character - lastChar) < 3 && this.lastContext) {
+    if (this.lastPosition && this.lastContext) {
+        const parts = this.lastPosition.split('#');
+        const lastLine = parseInt(parts[parts.length - 2] || '-1');
+        const lastChar = parseInt(parts[parts.length - 1] || '-1');
+        if (lastLine === position.line && Math.abs(position.character - lastChar) < 3) {
             return { ...this.lastContext, currentFile: cursorContext };
         }
     }
@@ -132,7 +133,7 @@ export class ContextEngine implements vscode.Disposable {
     }
 
     // 3. ASSEMBLE (Using warm background data)
-    const projectStyle = this.styleAnalyzer.getDefaultStyle();
+    const projectStyle = await this.styleAnalyzer.analyzeStyle(document);
     
     const context: ProjectContext = {
       currentFile: cursorContext,
@@ -155,7 +156,7 @@ export class ContextEngine implements vscode.Disposable {
 
     const compressed = this.contextRanker.rankAndCompress(context, this.config.getValue('maxContextTokens'));
     this.lastContext = compressed;
-    this.lastPosition = `${document.uri.toString()}:${position.line}:${position.character}`;
+    this.lastPosition = `${document.uri.toString()}#${position.line}#${position.character}`;
 
     return compressed;
   }
@@ -165,6 +166,11 @@ export class ContextEngine implements vscode.Disposable {
     this.isBackgroundUpdating = true;
 
     try {
+      const safe = <T>(label: string, fallback: T) => (err: unknown): T => {
+        this.logger.debug(`Background ${label} failed`, err);
+        return fallback;
+      };
+
       const [
         openFiles,
         gitDiffs,
@@ -174,13 +180,13 @@ export class ContextEngine implements vscode.Disposable {
         definitions,
         usages
       ] = await Promise.all([
-        this.getOpenFileContexts(document.uri).catch(() => []),
-        this.gitAnalyzer.getRecentDiffs().catch(() => []),
-        this.importTool.getImportPrompt(document).catch(() => ''),
-        this.historyTool.getFileHistory(document.uri.fsPath).catch(() => []),
-        this.projectGraphTool.findRelatedFiles(document).catch(() => []),
-        this.definitionTool.resolveDefinition(document, position).catch(() => null),
-        this.symbolUsageTool.findUsages(document, position).catch(() => [])
+        this.getOpenFileContexts(document.uri).catch(safe('openFiles', [])),
+        this.gitAnalyzer.getRecentDiffs().catch(safe('gitDiffs', [])),
+        this.importTool.getImportPrompt(document).catch(safe('importPrompt', '')),
+        this.historyTool.getFileHistory(document.uri.fsPath).catch(safe('fileHistory', [])),
+        this.projectGraphTool.findRelatedFiles(document).catch(safe('projectGraph', [])),
+        this.definitionTool.resolveDefinition(document, position).catch(safe('definitions', null)),
+        this.symbolUsageTool.findUsages(document, position).catch(safe('symbolUsages', []))
       ]);
 
       this.backgroundContext = {
@@ -265,6 +271,8 @@ export class ContextEngine implements vscode.Disposable {
     };
   }
 
+  private openFileCache = new Map<string, { context: FileContext; version: number }>();
+
   private async getOpenFileContexts(
     currentUri: vscode.Uri
   ): Promise<FileContext[]> {
@@ -278,7 +286,16 @@ export class ContextEngine implements vscode.Disposable {
 
           try {
             const doc = await vscode.workspace.openTextDocument(uri);
-            openFiles.push(this.buildFileContext(doc));
+            const cacheKey = uri.toString();
+            const cached = this.openFileCache.get(cacheKey);
+
+            if (cached && cached.version === doc.version) {
+              openFiles.push(cached.context);
+            } else {
+              const context = this.buildFileContext(doc);
+              this.openFileCache.set(cacheKey, { context, version: doc.version });
+              openFiles.push(context);
+            }
           } catch {
             // File might have been deleted or become unavailable
           }
@@ -366,6 +383,21 @@ export class ContextEngine implements vscode.Disposable {
       recentEdits: [],
       projectStyle: this.styleAnalyzer.getDefaultStyle(),
     };
+  }
+
+  clearCache(): void {
+    this.cachedSymbols = [];
+    this.cachedImports = [];
+    this.lastVersion = -1;
+    this.lastContext = null;
+    this.lastPosition = '';
+    this.backgroundContext = {};
+    this.editHistory = [];
+    this.openFileCache.clear();
+    this.symbolAnalyzer.clearCache();
+    this.importAnalyzer.clearCache();
+    this.styleAnalyzer.invalidate();
+    this.logger.info('Context engine cache cleared');
   }
 
   dispose(): void {

@@ -145,6 +145,15 @@ export class PerformanceMonitor implements vscode.Disposable {
     return total > 0 ? this.acceptedCount / total : 0;
   }
 
+  reset(): void {
+    this.samples = [];
+    this.acceptedCount = 0;
+    this.dismissedCount = 0;
+    this.totalRequests = 0;
+    this.updateStatusBar();
+    this.logger.info('Performance metrics reset');
+  }
+
   dispose(): void {
     if (this.updateTimer) {
       clearInterval(this.updateTimer);

@@ -52,32 +52,35 @@ export class PredictionEngine implements vscode.Disposable {
     
     // 1. FAST-PATH: Immediate Cache Lookup (Sub-millisecond)
     const cacheKey = `${document.uri.toString()}:${position.line}:${linePrefix}`;
-    const cached = await this.cache.get(cacheKey);
-    
+    const contextHash = this.cache.generateHash(context.currentFile.precedingLines);
+    const cached = await this.cache.get(cacheKey, contextHash);
+
     if (cached) {
       return cached;
     }
 
-    // 2. Heavy Context Hash Validation
-    const contextHash = this.cache.generateHash(context.currentFile.precedingLines);
-
-    // 3. Prompt Construction
+    // 2. Prompt Construction
     const prompt = this.promptBuilder.buildCompletionPrompt(context);
     
-    // 4. Model Inference
+    // 3. Model Inference
     const request: ModelRequest = {
       prompt,
       maxTokens: 128, // Small for speed, most completions are short
       temperature: 0, // Deterministic for better caching
       stopSequences: ['<|fim_suffix|>', '<|file_separator|>', '\n\n', '```'],
-      stream: false, // Streaming is slower for very short completions
+      stream: this.config.getValue('streamingEnabled'),
     };
 
     try {
-      const response = await this.modelLayer.complete(request);
+      let response: ModelResponse;
+      if (this.config.getValue('streamingEnabled')) {
+        response = await this.modelLayer.stream(request, () => { /* no-op: inline completions render atomically */ }, token);
+      } else {
+        response = await this.modelLayer.complete(request);
+      }
       if (token.isCancellationRequested) return null;
 
-      // 5. Post-processing
+      // 4. Post-processing
       const completionText = this.postProcess(response.text, linePrefix);
       if (!completionText) return null;
 
@@ -96,11 +99,12 @@ export class PredictionEngine implements vscode.Disposable {
         },
       };
 
-      // 6. Update Cache
+      // 5. Update Cache
       this.cache.set(cacheKey, result, contextHash);
 
       return result;
     } catch (err) {
+      this.logger.warn('Completion generation failed', err);
       return null;
     }
   }
@@ -130,6 +134,11 @@ export class PredictionEngine implements vscode.Disposable {
     if (processed.length === 0 || processed.length > 500) return '';
 
     return processed;
+  }
+
+  clearCache(): void {
+    this.cache.clear();
+    this.logger.info('Prediction cache cleared');
   }
 
   dispose(): void {

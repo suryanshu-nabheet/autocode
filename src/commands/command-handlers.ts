@@ -122,11 +122,19 @@ export class CommandHandlers implements vscode.Disposable {
   }
 
   private async clearCache(): Promise<void> {
-    this.logger.info('Cache cleared');
+    this.predictionEngine.clearCache();
+    this.contextEngine.clearCache();
+    this.completionProvider.clearState();
+    this.perfMonitor.reset();
+    this.logger.info('All caches cleared');
+    vscode.window.showInformationMessage('AutoCode: All caches cleared');
   }
 
   private async reindexProject(): Promise<void> {
     this.logger.info('Re-indexing project...');
+    await this.clearCache();
+    this.logger.info('Re-index complete');
+    vscode.window.showInformationMessage('AutoCode: Project re-indexed');
   }
 
   private openSettings(): void {

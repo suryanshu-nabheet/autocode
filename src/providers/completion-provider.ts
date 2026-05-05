@@ -37,6 +37,8 @@ export class AutoCodeCompletionProvider
     key: string;
     result: CompletionResult;
   } | null = null;
+  /** Track in-flight background requests to prevent stacking */
+  private inFlightFetches = new Map<string, AbortController>();
 
   constructor(
     contextEngine: ContextEngine,
@@ -103,6 +105,7 @@ export class AutoCodeCompletionProvider
         this.logger.debug('Sub-millisecond cache hit');
         this.currentCompletion = cached;
         this.acceptedOffset = 0;
+        this.schedulePrefetch(document, position);
         return [this.createInlineItem(cached, position, document)];
     }
 
@@ -120,6 +123,7 @@ export class AutoCodeCompletionProvider
         const res = this.prefetchResult.result;
         this.currentCompletion = res;
         this.acceptedOffset = 0;
+        this.schedulePrefetch(document, position);
         return [this.createInlineItem(res, position, document)];
     }
 
@@ -131,16 +135,32 @@ export class AutoCodeCompletionProvider
       position: vscode.Position,
       token: vscode.CancellationToken
   ): Promise<void> {
+      const linePrefix = document.lineAt(position.line).text.substring(0, position.character);
+      const fetchKey = `${document.uri.toString()}:${position.line}:${linePrefix}`;
+
+      // Check if there's already an in-flight request for this exact position
+      if (this.inFlightFetches.has(fetchKey)) {
+          this.logger.debug('Skipping duplicate background fetch', fetchKey);
+          return;
+      }
+
+      // Create an abort controller to allow cancellation
+      const controller = new AbortController();
+      this.inFlightFetches.set(fetchKey, controller);
+
       try {
           const projectContext = await this.contextEngine.buildContext(document, position, token);
+
+          // Check if cancelled during context build
+          if (controller.signal.aborted || token.isCancellationRequested) {
+              return;
+          }
+
           const completion = await this.predictionEngine.getCompletion(document, position, projectContext, token);
-          
-          if (completion && !token.isCancellationRequested) {
-              // Store in prefetch so the NEXT call (maybe from a debounce) can use it
-              const linePrefix = document.lineAt(position.line).text.substring(0, position.character);
-              const key = `${document.uri.toString()}:${position.line}:${linePrefix}`;
-              this.prefetchResult = { key, result: completion };
-              
+
+          if (completion && !token.isCancellationRequested && !controller.signal.aborted) {
+              this.prefetchResult = { key: fetchKey, result: completion };
+
               // If the user is still at the same position, we can try to re-trigger VS Code
               const currentPos = vscode.window.activeTextEditor?.selection.active;
               if (currentPos && currentPos.isEqual(position)) {
@@ -148,7 +168,9 @@ export class AutoCodeCompletionProvider
               }
           }
       } catch (err) {
-          // Silent
+          this.logger.debug('Background fetch failed', err);
+      } finally {
+          this.inFlightFetches.delete(fetchKey);
       }
   }
 
@@ -313,10 +335,24 @@ export class AutoCodeCompletionProvider
         }
 
         cts.dispose();
-      } catch {
-        // Prefetch failures are non-critical
+      } catch (err) {
+        this.logger.debug('Prefetch failed', err);
       }
-    }, 5);
+    }, 50);
+  }
+
+  clearState(): void {
+    // Abort any in-flight requests
+    for (const controller of this.inFlightFetches.values()) {
+      controller.abort();
+    }
+    this.inFlightFetches.clear();
+
+    this.currentCompletion = null;
+    this.acceptedOffset = 0;
+    this.lastPosition = null;
+    this.prefetchResult = null;
+    this.logger.info('Completion provider state cleared');
   }
 
   private isExcludedLanguage(langId: string): boolean {
@@ -326,6 +362,16 @@ export class AutoCodeCompletionProvider
       'binary',
       'search-result',
       'scm-input',
+      'plaintext',
+      'csv',
+      'tsv',
+      'markdown',
+      'json',
+      'jsonc',
+      'yaml',
+      'yml',
+      'xml',
+      'dockerfile',
     ];
     return excluded.includes(langId);
   }

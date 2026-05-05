@@ -17,7 +17,7 @@ const DEFAULT_CONFIG: AutoCodeConfig = {
   apiKey: '',
   apiEndpoint: 'http://localhost:11434',
   maxContextTokens: 8192,
-  debounceMs: 0,
+  debounceMs: 150,
   prefetchEnabled: true,
   maxCompletionLines: 50,
   streamingEnabled: true,
@@ -33,6 +33,8 @@ export class ConfigManager implements vscode.Disposable {
   private config: AutoCodeConfig;
   private disposables: vscode.Disposable[] = [];
   private changeEmitter = new vscode.EventEmitter<Partial<AutoCodeConfig>>();
+  private secretStorage: vscode.SecretStorage | null = null;
+  private cachedSecretKey: string | null = null;
 
   /** Fired when any configuration value changes */
   public readonly onConfigChange = this.changeEmitter.event;
@@ -55,11 +57,64 @@ export class ConfigManager implements vscode.Disposable {
     );
   }
 
+  static initialize(secretStorage: vscode.SecretStorage): void {
+    const instance = ConfigManager.getInstance();
+    instance.secretStorage = secretStorage;
+    // Warm the secret cache in the background
+    instance.refreshSecretKey();
+  }
+
   static getInstance(): ConfigManager {
     if (!ConfigManager.instance) {
       ConfigManager.instance = new ConfigManager();
     }
     return ConfigManager.instance;
+  }
+
+  /** Get the API key from secure storage (preferred) or plain settings (fallback) */
+  async getApiKey(): Promise<string> {
+    if (this.cachedSecretKey !== null) {
+      return this.cachedSecretKey;
+    }
+    if (this.secretStorage) {
+      try {
+        const secret = await this.secretStorage.get('autocode.apiKey');
+        if (secret) {
+          this.cachedSecretKey = secret;
+          return secret;
+        }
+      } catch {
+        // Fallback to plain settings below
+      }
+    }
+    return this.config.apiKey || '';
+  }
+
+  /** Store the API key in secure storage and clear it from plain settings */
+  async setApiKey(value: string): Promise<void> {
+    this.cachedSecretKey = value;
+    if (this.secretStorage) {
+      if (value) {
+        await this.secretStorage.store('autocode.apiKey', value);
+      } else {
+        await this.secretStorage.delete('autocode.apiKey');
+      }
+    }
+    // Also clear from plain settings to migrate old users
+    const wsConfig = vscode.workspace.getConfiguration(CONFIG_SECTION);
+    const plain = wsConfig.get<string>('apiKey', '');
+    if (plain) {
+      await wsConfig.update('apiKey', undefined, true);
+    }
+  }
+
+  private async refreshSecretKey(): Promise<void> {
+    if (!this.secretStorage) {return;}
+    try {
+      this.cachedSecretKey = await this.secretStorage.get('autocode.apiKey') || null;
+    } catch {
+      this.cachedSecretKey = null;
+    }
   }
 
   /** Get a snapshot of the current config */
@@ -75,15 +130,17 @@ export class ConfigManager implements vscode.Disposable {
   /** Check if the engine is enabled and properly configured with enhanced validation */
   isReady(): boolean {
     if (!this.config.enabled) {return false;}
-    
+
+    const key = this.cachedSecretKey !== null ? this.cachedSecretKey : this.config.apiKey;
+
     // Provider-specific validation
     switch (this.config.provider) {
       case 'ollama':
         return true; // Ollama uses local endpoint, no key needed
       case 'openai':
-        return !!this.config.apiKey && this.config.apiKey.trim().length > 0;
+        return !!key && key.trim().length > 0;
       case 'anthropic':
-        return !!this.config.apiKey && this.config.apiKey.trim().length > 0;
+        return !!key && key.trim().length > 0;
       case 'custom':
         return !!this.config.apiEndpoint && this.config.apiEndpoint.trim().length > 0;
       default:
@@ -101,7 +158,9 @@ export class ConfigManager implements vscode.Disposable {
       case 'ollama':
         return this.config.apiEndpoint || 'http://localhost:11434';
       case 'custom':
-        return this.config.apiEndpoint;
+        return this.config.apiEndpoint || '';
+      default:
+        return this.config.apiEndpoint || '';
     }
   }
 

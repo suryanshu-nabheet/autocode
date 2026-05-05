@@ -23,14 +23,20 @@ export class PromptBuilder {
     const sections: string[] = [];
 
     // 0. System instructions
-    sections.push(this.buildSystemSection());
+    sections.push(this.buildSystemSection(context.currentFile.file.languageId));
 
     // 1. High-Priority: Symbols & Signatures (Technical Constraints)
+    if (context.resolvedDefinitions) {
+      sections.push(context.resolvedDefinitions);
+    }
     if (context.resolvedSignatures && context.resolvedSignatures.length > 0) {
         sections.push(`<signatures>\n${context.resolvedSignatures.join('\n')}\n</signatures>`);
     }
     if (context.symbols.length > 0) {
         sections.push(this.buildSymbolsSection(context));
+    }
+    if (context.importSuggestions) {
+      sections.push(context.importSuggestions);
     }
 
     // 2. Middle-Priority: Related Code & History (Contextual Clues)
@@ -39,6 +45,12 @@ export class PromptBuilder {
     }
     if (context.fileHistory) {
       sections.push(context.fileHistory);
+    }
+    if (context.symbolUsages) {
+      sections.push(context.symbolUsages);
+    }
+    if (context.projectRelationships) {
+      sections.push(context.projectRelationships);
     }
 
     // 3. Low-Priority: Diagnostics & Edits (Correctional Clues)
@@ -57,18 +69,52 @@ export class PromptBuilder {
     const fim = `<|fim_prefix|>${cursor.precedingLines}${cursor.linePrefix}<|fim_suffix|>${cursor.lineSuffix}${cursor.followingLines}<|fim_middle|>`;
     sections.push(fim);
 
-    return sections.filter(Boolean).join('\n\n');
+    const prompt = sections.filter(Boolean).join('\n\n');
+
+    // Final guard: if prompt is enormous, drop lowest-priority sections
+    const MAX_PROMPT_CHARS = 12000;
+    if (prompt.length > MAX_PROMPT_CHARS) {
+      this.logger.warn(`Prompt exceeded ${MAX_PROMPT_CHARS} chars (${prompt.length}), truncating low-priority sections`);
+      const prioritySections = [
+        sections[0], // system
+        sections[sections.length - 1], // FIM
+      ];
+      // Keep symbols and signatures if they exist
+      for (let i = 1; i < sections.length - 1; i++) {
+        const s = sections[i];
+        if (s && (s.includes('<signatures>') || s.includes('<symbols_in_scope>'))) {
+          prioritySections.splice(prioritySections.length - 1, 0, s);
+        }
+      }
+      return prioritySections.filter(Boolean).join('\n\n');
+    }
+
+    return prompt;
   }
 
-  private buildSystemSection(): string {
+  private buildSystemSection(languageId: string): string {
+    const langRules: Record<string, string> = {
+      typescript: 'TypeScript: respect explicit types, use interfaces where appropriate, prefer strict null checks.',
+      javascript: 'JavaScript: use modern ES2022+ syntax, avoid var, prefer const/let.',
+      python: 'Python: follow PEP 8, use snake_case, include type hints if the project uses them.',
+      go: 'Go: handle errors explicitly, keep lines short, use standard library patterns.',
+      rust: 'Rust: handle Result/Option with ? or match, avoid unwrap() in library code.',
+      java: 'Java: use camelCase, explicit types, standard Java conventions.',
+      csharp: 'C#: use PascalCase for methods/properties, camelCase for locals, async/await properly.',
+    };
+    const langHint = langRules[languageId] || `Language: ${languageId}. Match the existing syntax and conventions.`;
+
     return `You are AutoCode, the world's most accurate autonomous coding engine.
 Context is provided in XML tags. Use it to predict the MOST LIKELY code to follow the prefix.
 
+${langHint}
+
 STRICT RULES:
 - Return ONLY the code to insert.
-- NO markdown, NO code blocks.
+- NO markdown, NO code blocks, NO natural language explanation.
 - Match existing indentation and style perfectly.
-- STOP if you reach the next logical block or duplicate suffix code.`;
+- STOP if you reach the next logical block or duplicate suffix code.
+- Do NOT repeat the prefix or suffix already shown in the FIM block.`;
   }
 
   private buildStyleSection(style: ProjectStyle): string {
@@ -87,9 +133,10 @@ Constants: ${conventions.constants}
 
   private buildRelatedFilesSection(context: ProjectContext): string {
     const fileSummaries = context.relatedFiles
+      .slice(0, 5)
       .map((f) => {
-        const content = f.content.length > 500
-          ? f.content.substring(0, 500) + '\n// ... (truncated)'
+        const content = f.content.length > 200
+          ? f.content.substring(0, 200) + '\n// ... (truncated)'
           : f.content;
         return `--- ${f.relativePath} (${f.languageId}) ---\n${content}`;
       })

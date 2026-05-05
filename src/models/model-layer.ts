@@ -79,13 +79,16 @@ export class ModelLayer implements vscode.Disposable {
     const controller = new AbortController();
     this.pendingRequests.set(category, controller);
 
+    const timeoutMs = category === 'completion' ? 15000 : 30000;
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
     await this.rateLimit();
     const adapter = this.getAdapter();
     const timer = this.logger.time(`ModelLayer.complete:${category}`);
 
     try {
       this.logger.debug(`Sending ${category} request (${request.prompt.length} chars)`);
-      const response = await adapter.complete(request, controller.signal);
+      const response = await this.withRetry(() => adapter.complete(request, controller.signal));
       timer();
       this.requestCount++;
       this.logger.debug(`Model response received (${response.text.length} chars)`);
@@ -98,6 +101,7 @@ export class ModelLayer implements vscode.Disposable {
       this.logger.error(`Model ${category} failed`, err);
       throw err;
     } finally {
+        clearTimeout(timeoutId);
         if (this.pendingRequests.get(category) === controller) {
             this.pendingRequests.delete(category);
         }
@@ -117,12 +121,15 @@ export class ModelLayer implements vscode.Disposable {
     const controller = new AbortController();
     this.pendingRequests.set(category, controller);
 
+    const timeoutMs = category === 'completion' ? 15000 : 30000;
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
     await this.rateLimit();
     const adapter = this.getAdapter();
     const timer = this.logger.time(`ModelLayer.stream:${category}`);
 
     try {
-      const response = await adapter.stream(request, callback, token, controller.signal);
+      const response = await this.withRetry(() => adapter.stream(request, callback, token, controller.signal));
       timer();
       this.requestCount++;
       return response;
@@ -134,6 +141,7 @@ export class ModelLayer implements vscode.Disposable {
       this.logger.error(`Model streaming (${category}) failed`, err);
       throw err;
     } finally {
+        clearTimeout(timeoutId);
         if (this.pendingRequests.get(category) === controller) {
             this.pendingRequests.delete(category);
         }
@@ -177,6 +185,32 @@ export class ModelLayer implements vscode.Disposable {
     this.lastRequestTime = Date.now();
   }
 
+  private async withRetry<T>(fn: () => Promise<T>, maxAttempts = 3, baseDelayMs = 500): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastError = err;
+        const isRetryable = err instanceof Error && (
+          err.message.includes('ECONNRESET') ||
+          err.message.includes('ETIMEDOUT') ||
+          err.message.includes('fetch failed') ||
+          err.message.includes('502') ||
+          err.message.includes('503') ||
+          err.message.includes('429')
+        );
+        if (!isRetryable || attempt >= maxAttempts - 1) {
+          throw err;
+        }
+        const delay = baseDelayMs * Math.pow(2, attempt) + Math.random() * 200;
+        this.logger.warn(`Retryable error, attempt ${attempt + 1}/${maxAttempts}. Retrying in ${Math.round(delay)}ms...`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+    throw lastError;
+  }
+
   getRequestCount(): number {
     return this.requestCount;
   }
@@ -202,7 +236,7 @@ class OpenAIAdapter implements ProviderAdapter {
   async complete(request: ModelRequest, signal?: AbortSignal): Promise<ModelResponse> {
     const startTime = Date.now();
     const endpoint = this.config.getEndpoint();
-    const apiKey = this.config.getValue('apiKey');
+    const apiKey = await this.config.getApiKey();
     const model = this.config.getValue('model');
 
     const body = {
@@ -259,7 +293,7 @@ class OpenAIAdapter implements ProviderAdapter {
   ): Promise<ModelResponse> {
     const startTime = Date.now();
     const endpoint = this.config.getEndpoint();
-    const apiKey = this.config.getValue('apiKey');
+    const apiKey = await this.config.getApiKey();
     const model = this.config.getValue('model');
 
     const body = {
@@ -349,7 +383,7 @@ class OpenAIAdapter implements ProviderAdapter {
   async checkStatus(): Promise<{ ok: boolean; error?: string }> {
       try {
           const endpoint = this.config.getEndpoint();
-          const apiKey = this.config.getValue('apiKey');
+          const apiKey = await this.config.getApiKey();
           if (!apiKey && this.config.getValue('provider') === 'openai') {
               return { ok: false, error: 'API Key missing for OpenAI' };
           }
@@ -377,7 +411,7 @@ class AnthropicAdapter implements ProviderAdapter {
   async complete(request: ModelRequest, signal?: AbortSignal): Promise<ModelResponse> {
     const startTime = Date.now();
     const endpoint = this.config.getEndpoint();
-    const apiKey = this.config.getValue('apiKey');
+    const apiKey = await this.config.getApiKey();
     const model = this.config.getValue('model');
 
     const body = {
@@ -431,7 +465,7 @@ class AnthropicAdapter implements ProviderAdapter {
   ): Promise<ModelResponse> {
     const startTime = Date.now();
     const endpoint = this.config.getEndpoint();
-    const apiKey = this.config.getValue('apiKey');
+    const apiKey = await this.config.getApiKey();
     const model = this.config.getValue('model');
 
     const body = {
@@ -518,7 +552,7 @@ class AnthropicAdapter implements ProviderAdapter {
   async checkStatus(): Promise<{ ok: boolean; error?: string }> {
       try {
           const endpoint = this.config.getEndpoint();
-          const apiKey = this.config.getValue('apiKey');
+          const apiKey = await this.config.getApiKey();
           if (!apiKey && this.config.getValue('provider') === 'anthropic') {
               return { ok: false, error: 'API Key missing for Anthropic' };
           }

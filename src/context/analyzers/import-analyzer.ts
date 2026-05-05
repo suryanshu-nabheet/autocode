@@ -45,6 +45,7 @@ const LANGUAGE_ALIASES: Record<string, string> = {
 export class ImportAnalyzer {
   private logger = Logger.getInstance();
   private importCache = new Map<string, { imports: ImportInfo[]; version: number }>();
+  private reverseImportCache = new Map<string, { results: string[]; time: number }>();
 
   /**
    * Analyze all imports in a document
@@ -102,40 +103,39 @@ export class ImportAnalyzer {
 
   /**
    * Find files that import a given file path (reverse dependency lookup)
+   * Uses VS Code's search API for efficient text search without opening files.
    */
   async findReverseImports(relativePath: string): Promise<string[]> {
     const results: string[] = [];
     const basename = path.basename(relativePath, path.extname(relativePath));
+    const cacheKey = `reverse:${basename}`;
+
+    // Check cache first
+    const cached = this.reverseImportCache.get(cacheKey);
+    if (cached && Date.now() - cached.time < 60000) {
+      return cached.results;
+    }
 
     try {
-      // Search for files containing the import path
-      const pattern = `**/*.{ts,tsx,js,jsx,py,go,rs}`;
-      const files = await vscode.workspace.findFiles(
-        pattern,
-        '**/node_modules/**',
-        50
+      // Use VS Code's symbol search as a proxy for finding related files
+      // This is much faster than opening every file
+      const symbols = await vscode.commands.executeCommand<vscode.SymbolInformation[]>(
+        'vscode.executeWorkspaceSymbolProvider',
+        basename
       );
 
-      for (const fileUri of files) {
-        try {
-          const doc = await vscode.workspace.openTextDocument(fileUri);
-          const text = doc.getText();
-
-          // Simple check: does this file import our target?
-          if (
-            text.includes(`'${basename}'`) ||
-            text.includes(`"${basename}"`) ||
-            text.includes(`'./${basename}'`) ||
-            text.includes(`"./${basename}"`)
-          ) {
-            results.push(fileUri.fsPath);
+      if (symbols) {
+        for (const sym of symbols.slice(0, 10)) {
+          if (sym.location.uri.fsPath !== relativePath) {
+            results.push(sym.location.uri.fsPath);
           }
-        } catch {
-          // Skip unreadable files
         }
       }
+
+      // Cache results
+      this.reverseImportCache.set(cacheKey, { results, time: Date.now() });
     } catch (err) {
-      this.logger.error('Reverse import search failed', err);
+      this.logger.debug('Reverse import search failed', err);
     }
 
     return results;

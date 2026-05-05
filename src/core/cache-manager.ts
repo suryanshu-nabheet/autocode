@@ -52,6 +52,8 @@ export class CacheManager<T> {
 
     // Optional context validation
     if (contextHash && entry.hash !== contextHash) {
+      this.stats.misses++;
+      this.updateHitRate();
       return null;
     }
 

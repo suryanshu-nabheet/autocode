@@ -99,41 +99,40 @@ export class SymbolAnalyzer {
   ): Promise<SymbolInfo[]> {
     const text = document.getText();
     const identifiers = this.extractIdentifiers(text);
-    const results: SymbolInfo[] = [];
     const seen = new Set<string>();
 
     // Query workspace for unique identifiers (limited to top 20 for performance)
-    const topIdentifiers = identifiers.slice(0, 20);
-
-    for (const id of topIdentifiers) {
-      if (seen.has(id)) {continue;}
+    const topIdentifiers = identifiers.slice(0, 20).filter((id) => {
+      if (seen.has(id)) {return false;}
       seen.add(id);
+      return true;
+    });
 
+    const queries = topIdentifiers.map(async (id) => {
       try {
         const wsSymbols = await vscode.commands.executeCommand<
           vscode.SymbolInformation[]
         >('vscode.executeWorkspaceSymbolProvider', id);
 
-        if (wsSymbols) {
-          for (const sym of wsSymbols.slice(0, 3)) {
-            // Avoid adding symbols from the current file (already handled)
-            if (sym.location.uri.toString() === document.uri.toString()) {continue;}
-            
-            results.push({
-              name: sym.name,
-              kind: sym.kind,
-              range: sym.location.range,
-              containerName: sym.containerName,
-              filePath: sym.location.uri.fsPath,
-            });
-          }
-        }
-      } catch {
-        // Fallback for languages without workspace symbol support
-      }
-    }
+        if (!wsSymbols) {return [];}
 
-    return results;
+        return wsSymbols.slice(0, 3)
+          .filter((sym) => sym.location.uri.toString() !== document.uri.toString())
+          .map((sym) => ({
+            name: sym.name,
+            kind: sym.kind,
+            range: sym.location.range,
+            containerName: sym.containerName,
+            filePath: sym.location.uri.fsPath,
+          }));
+      } catch (err) {
+        this.logger.debug(`Workspace symbol lookup failed for "${id}"`, err);
+        return [];
+      }
+    });
+
+    const nested = await Promise.all(queries);
+    return nested.flat();
   }
 
   /**
