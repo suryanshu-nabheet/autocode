@@ -29,6 +29,7 @@ interface ProviderAdapter {
     token?: vscode.CancellationToken,
     signal?: AbortSignal
   ): Promise<ModelResponse>;
+  fetchModels(): Promise<string[]>;
   checkStatus(): Promise<{ ok: boolean; error?: string }>;
 }
 
@@ -61,6 +62,19 @@ export class ModelLayer implements vscode.Disposable {
           return { ok: result.ok, provider, model, error: result.error };
       } catch (err: any) {
           return { ok: false, provider, model, error: err.message };
+      }
+  }
+
+  /**
+   * Fetch available models from the current provider
+   */
+  async fetchModels(): Promise<string[]> {
+      try {
+          const adapter = this.getAdapter();
+          return await adapter.fetchModels();
+      } catch (err) {
+          this.logger.error('Failed to fetch models', err);
+          return [];
       }
   }
 
@@ -380,6 +394,21 @@ class OpenAIAdapter implements ProviderAdapter {
     };
   }
 
+  async fetchModels(): Promise<string[]> {
+      try {
+          const endpoint = this.config.getEndpoint();
+          const apiKey = await this.config.getApiKey();
+          const response = await fetch(`${endpoint}/models`, {
+              headers: { Authorization: `Bearer ${apiKey}` }
+          });
+          if (!response.ok) {return [];}
+          const data = await response.json() as any;
+          return data.data?.map((m: any) => m.id) || [];
+      } catch {
+          return ['gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo'];
+      }
+  }
+
   async checkStatus(): Promise<{ ok: boolean; error?: string }> {
       try {
           const endpoint = this.config.getEndpoint();
@@ -547,6 +576,15 @@ class AnthropicAdapter implements ProviderAdapter {
       },
       latencyMs,
     };
+  }
+
+  async fetchModels(): Promise<string[]> {
+      return [
+          'claude-3-5-sonnet-20240620',
+          'claude-3-opus-20240229',
+          'claude-3-sonnet-20240229',
+          'claude-3-haiku-20240307'
+      ];
   }
 
   async checkStatus(): Promise<{ ok: boolean; error?: string }> {
@@ -725,6 +763,18 @@ class OllamaAdapter implements ProviderAdapter {
     return prompt;
   }
 
+  async fetchModels(): Promise<string[]> {
+      try {
+          const endpoint = this.config.getEndpoint();
+          const response = await fetch(`${endpoint}/api/tags`);
+          if (!response.ok) {return [];}
+          const data = await response.json() as any;
+          return data.models?.map((m: any) => m.name) || [];
+      } catch {
+          return [];
+      }
+  }
+
   async checkStatus(): Promise<{ ok: boolean; error?: string }> {
       try {
           const endpoint = this.config.getEndpoint();
@@ -763,6 +813,11 @@ class CustomAdapter implements ProviderAdapter {
   ): Promise<ModelResponse> {
     const openaiAdapter = new OpenAIAdapter(this.config, this.logger);
     return openaiAdapter.stream(request, callback, token, signal);
+  }
+
+  async fetchModels(): Promise<string[]> {
+      const openaiAdapter = new OpenAIAdapter(this.config, this.logger);
+      return openaiAdapter.fetchModels();
   }
 
   async checkStatus(): Promise<{ ok: boolean; error?: string }> {

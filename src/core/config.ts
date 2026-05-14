@@ -13,7 +13,7 @@ const CONFIG_SECTION = 'autocode';
 const DEFAULT_CONFIG: AutoCodeConfig = {
   enabled: true,
   provider: 'ollama',
-  model: 'qwen2.5-coder:1.5b',
+  model: 'qwen3.5:4b',
   apiKey: '',
   apiEndpoint: 'http://localhost:11434',
   maxContextTokens: 8192,

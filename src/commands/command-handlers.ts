@@ -13,6 +13,7 @@ import { PredictionEngine } from '../prediction/prediction-engine';
 import { AutoCodeCompletionProvider } from '../providers/completion-provider';
 import { PerformanceMonitor } from '../performance/performance-monitor';
 import { SettingsPanel } from '../settings/settings-panel';
+import { ModelLayer } from '../models/model-layer';
 
 /**
  * Manages the registration and execution of user-facing commands.
@@ -26,6 +27,7 @@ export class CommandHandlers implements vscode.Disposable {
   private predictionEngine: PredictionEngine;
   private completionProvider: AutoCodeCompletionProvider;
   private perfMonitor: PerformanceMonitor;
+  private modelLayer: ModelLayer;
   private extensionUri: vscode.Uri;
 
   constructor(
@@ -33,6 +35,7 @@ export class CommandHandlers implements vscode.Disposable {
     predictionEngine: PredictionEngine,
     completionProvider: AutoCodeCompletionProvider,
     perfMonitor: PerformanceMonitor,
+    modelLayer: ModelLayer,
     extensionUri: vscode.Uri
   ) {
     this.logger = Logger.getInstance();
@@ -42,6 +45,7 @@ export class CommandHandlers implements vscode.Disposable {
     this.predictionEngine = predictionEngine;
     this.completionProvider = completionProvider;
     this.perfMonitor = perfMonitor;
+    this.modelLayer = modelLayer;
     this.extensionUri = extensionUri;
 
     this.registerCommands();
@@ -138,7 +142,7 @@ export class CommandHandlers implements vscode.Disposable {
   }
 
   private openSettings(): void {
-    SettingsPanel.createOrShow(this.extensionUri);
+    SettingsPanel.createOrShow(this.extensionUri, this.modelLayer);
   }
 
   dispose(): void {

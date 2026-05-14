@@ -71,6 +71,7 @@ export function activate(context: vscode.ExtensionContext): void {
     predictionEngine,
     completionProvider,
     perfMonitor,
+    modelLayer,
     context.extensionUri
   );
   disposables.push(commandHandlers);
@@ -110,7 +111,7 @@ export function activate(context: vscode.ExtensionContext): void {
       openSettings
     ).then((selected) => {
       if (selected === openSettings) {
-        SettingsPanel.createOrShow(context.extensionUri);
+        SettingsPanel.createOrShow(context.extensionUri, modelLayer);
       }
     });
   }
