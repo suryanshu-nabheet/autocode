@@ -338,7 +338,7 @@ class OpenAIAdapter implements ProviderAdapter {
     const decoder = new TextDecoder();
     let buffer = '';
 
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) {break;}
 
@@ -507,7 +507,7 @@ class AnthropicAdapter implements ProviderAdapter {
     const decoder = new TextDecoder();
     let buffer = '';
 
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) {break;}
 
@@ -675,7 +675,7 @@ class OllamaAdapter implements ProviderAdapter {
 
     const decoder = new TextDecoder();
 
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) {break;}
 

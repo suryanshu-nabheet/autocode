@@ -1,0 +1,14 @@
+.vscode/**
+.git/**
+.gitignore
+.vscodeignore
+tsconfig.json
+src/**
+scripts/**
+docs/**
+**/*.ts
+**/*.map
+node_modules/**
+!node_modules/lru-cache/**
+!node_modules/web-tree-sitter/**
+!node_modules/xxhash-wasm/**
