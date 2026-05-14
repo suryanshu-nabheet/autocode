@@ -139,6 +139,39 @@ export class BuildAnalyzer implements vscode.Disposable {
         this.analyzeWorkspaceFiles();
       })
     );
+
+    // AUTO-OPTIMIZATION: Background loop
+    setInterval(() => this.autoOptimize(), 60000); // Every minute
+  }
+
+  /**
+   * Automatically adjust configuration based on live performance metrics
+   */
+  private async autoOptimize(): Promise<void> {
+      const metrics = this.collectMetrics();
+      const config = vscode.workspace.getConfiguration('autocode');
+      
+      // 1. If latency is high, reduce context tokens to speed up
+      if (metrics.performance.avgLatencyMs > 1000) {
+          const currentTokens = config.get<number>('maxContextTokens', 2048);
+          if (currentTokens > 1024) {
+              await config.update('maxContextTokens', Math.max(1024, currentTokens - 256), true);
+              this.logger.info(`Auto-optimized: Reduced maxContextTokens to ${currentTokens - 256} due to high latency`);
+          }
+      }
+      
+      // 2. If cache hit rate is high, we can afford more context
+      if (metrics.cacheStats.l1HitRate > 0.6) {
+          const currentTokens = config.get<number>('maxContextTokens', 2048);
+          if (currentTokens < 4096) {
+              await config.update('maxContextTokens', currentTokens + 128, true);
+          }
+      }
+
+      // 3. Enable streaming if not active but latency is high
+      if (metrics.performance.avgLatencyMs > 500 && !config.get('streamingEnabled')) {
+          await config.update('streamingEnabled', true, true);
+      }
   }
 
   /**

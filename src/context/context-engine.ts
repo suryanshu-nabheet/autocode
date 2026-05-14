@@ -124,12 +124,12 @@ export class ContextEngine implements vscode.Disposable {
     const imports = isStale ? this.importAnalyzer.analyzeImports(document) : this.cachedImports;
     const diagAnalys = await this.diagnosticAnalyzer.analyzeDiagnostics(document, position);
 
-    if (isStale) {
+    if (isStale || diagAnalys.length > 0) {
       this.cachedSymbols = symbols;
       this.cachedImports = imports;
       this.lastVersion = document.version;
-      // Trigger background refresh on document change
-      this.refreshBackgroundContext(document, position);
+      // Trigger background refresh on document change or error detection
+      this.refreshBackgroundContext(document, position, diagAnalys.length > 0);
     }
 
     // 3. ASSEMBLE (Using warm background data)
@@ -161,8 +161,8 @@ export class ContextEngine implements vscode.Disposable {
     return compressed;
   }
 
-  private async refreshBackgroundContext(document: vscode.TextDocument, position: vscode.Position) {
-    if (this.isBackgroundUpdating) return;
+  private async refreshBackgroundContext(document: vscode.TextDocument, position: vscode.Position, prioritizeErrors: boolean = false) {
+    if (this.isBackgroundUpdating && !prioritizeErrors) return;
     this.isBackgroundUpdating = true;
 
     try {
@@ -196,8 +196,13 @@ export class ContextEngine implements vscode.Disposable {
         fileHistory: this.historyTool.formatForPrompt(fileHistory as any),
         projectRelationships: this.projectGraphTool.formatForPrompt(projectRel as any),
         resolvedDefinitions: definitions ? this.definitionTool.formatForPrompt([definitions]) : '',
-        symbolUsages: usages.length > 0 ? this.symbolUsageTool.formatForPrompt(usages) : ''
+        symbolUsages: usages.length > 0 ? this.symbolUsageTool.formatForPrompt(usages) : '',
+        // If prioritizeErrors is true, we could add even more specific lookups here
       };
+
+      if (prioritizeErrors) {
+          this.logger.debug('Prioritizing error correction context');
+      }
     } finally {
       this.isBackgroundUpdating = false;
     }

@@ -269,6 +269,7 @@ export class SettingsPanel implements vscode.Disposable {
       cacheTTLSeconds: config.cacheTTLSeconds,
       styleLearnEnabled: config.styleLearnEnabled,
       logLevel: config.logLevel,
+      maxTokens: config.maxTokens,
     };
   }
 
@@ -284,188 +285,147 @@ export class SettingsPanel implements vscode.Disposable {
   <title>AutoCode Settings</title>
   <style nonce="${nonce}">
     :root {
-      --accent: #007aff;
-      --accent-hover: #0062cc;
+      --accent: #0078d4;
+      --accent-hover: #106ebe;
       --bg: var(--vscode-editor-background);
       --bg-subtle: var(--vscode-sideBar-background, var(--bg));
-      --border: var(--vscode-widget-border, rgba(128,128,128,0.2));
+      --border: var(--vscode-widget-border, rgba(128,128,128,0.15));
       --text: var(--vscode-editor-foreground);
       --text-muted: var(--vscode-descriptionForeground);
       --text-subtle: var(--vscode-disabledForeground);
       --success: #2ea043;
       --error: #f85149;
-      --card-bg: var(--vscode-editor-background);
       --input-bg: var(--vscode-input-background, rgba(0,0,0,0.1));
+      --input-border: var(--vscode-input-border, var(--border));
     }
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
-      font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, sans-serif);
+      font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
       font-size: 13px;
       color: var(--text);
       background: var(--bg);
-      line-height: 1.6;
+      line-height: 1.5;
       overflow: hidden;
     }
 
-    .app {
-      display: flex;
-      height: 100vh;
-      animation: fadeIn 0.4s ease-out;
-    }
+    .app { display: flex; height: 100vh; }
 
-    @keyframes fadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
-
-    /* Sidebar - Premium Minimalist */
+    /* ── Sidebar ── */
     .sidebar {
       width: 200px;
+      min-width: 200px;
       background: var(--bg-subtle);
       border-right: 1px solid var(--border);
-      padding: 32px 0;
+      padding: 24px 0;
       display: flex;
       flex-direction: column;
     }
 
-    .nav-header {
-      padding: 0 24px 24px;
-      margin-bottom: 8px;
-    }
+    .nav-header { padding: 0 20px 20px; }
 
     .nav-title {
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 1.5px;
-      color: var(--text);
-      opacity: 0.8;
+      color: var(--text-muted);
     }
 
     .nav-item {
-      padding: 10px 24px;
+      padding: 9px 20px;
       cursor: pointer;
-      font-size: 14px;
+      font-size: 13px;
       color: var(--text-muted);
-      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
       position: relative;
+      user-select: none;
     }
 
-    .nav-item:hover {
-      color: var(--text);
-      padding-left: 28px;
-    }
+    .nav-item:hover { color: var(--text); background: rgba(128,128,128,0.06); }
 
     .nav-item.active {
       color: var(--text);
       font-weight: 600;
-      background: rgba(0, 122, 255, 0.1);
+      background: rgba(0, 120, 212, 0.08);
     }
 
     .nav-item.active::before {
       content: '';
       position: absolute;
-      left: 0;
-      top: 0;
-      bottom: 0;
-      width: 3px;
+      left: 0; top: 0; bottom: 0;
+      width: 2px;
       background: var(--accent);
     }
 
-    /* Main Content */
+    /* ── Main ── */
     .main {
       flex: 1;
       display: flex;
       flex-direction: column;
       overflow: hidden;
-      background: var(--bg);
     }
 
-    .header {
-      padding: 40px 48px 24px;
-    }
+    .header { padding: 32px 40px 20px; }
 
     .header h1 {
-      font-size: 28px;
-      font-weight: 700;
-      letter-spacing: -0.8px;
-      margin-bottom: 4px;
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.3px;
+      margin-bottom: 2px;
     }
 
-    .header p {
-      font-size: 14px;
-      color: var(--text-muted);
-    }
+    .header p { font-size: 13px; color: var(--text-muted); }
 
     .content {
       flex: 1;
       overflow-y: auto;
-      padding: 0 48px 60px;
+      padding: 0 40px 48px;
       scrollbar-width: thin;
       scrollbar-color: var(--border) transparent;
     }
 
-    .page {
-      display: none;
-      max-width: 800px;
-    }
+    .page { display: none; max-width: 720px; }
+    .page.active { display: block; }
 
-    .page.active {
-      display: block;
-      animation: slideUp 0.3s cubic-bezier(0, 0, 0.2, 1);
-    }
-
-    @keyframes slideUp {
-      from { opacity: 0; transform: translateY(10px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    /* Sections */
-    .section {
-      margin-bottom: 48px;
-    }
+    /* ── Sections ── */
+    .section { margin-bottom: 36px; }
 
     .section-title {
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 1.2px;
+      letter-spacing: 1px;
       color: var(--text-muted);
-      margin-bottom: 20px;
-      padding-bottom: 12px;
+      margin-bottom: 4px;
+      padding-bottom: 10px;
       border-bottom: 1px solid var(--border);
     }
 
-    /* Settings Rows */
+    /* ── Settings Rows ── */
     .setting-row {
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       justify-content: space-between;
-      padding: 20px 0;
+      padding: 14px 0;
       border-bottom: 1px solid var(--border);
-      gap: 32px;
+      gap: 24px;
     }
 
-    .setting-row:last-child {
-      border-bottom: none;
-    }
+    .setting-row:last-child { border-bottom: none; }
 
-    .setting-info {
-      flex: 1;
-    }
+    .setting-info { flex: 1; min-width: 0; }
 
     .setting-label {
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 600;
       color: var(--text);
       display: block;
-      margin-bottom: 4px;
+      margin-bottom: 2px;
     }
 
     .setting-desc {
-      font-size: 13px;
+      font-size: 12px;
       color: var(--text-muted);
       display: block;
       line-height: 1.4;
@@ -476,139 +436,112 @@ export class SettingsPanel implements vscode.Disposable {
       display: flex;
       flex-direction: column;
       align-items: flex-end;
-      gap: 12px;
+      gap: 8px;
     }
 
-    /* Toggle Switch */
-    .toggle {
-      position: relative;
-      width: 44px;
-      height: 24px;
-    }
-
-    .toggle input {
-      opacity: 0;
-      width: 0;
-      height: 0;
-    }
+    /* ── Toggle Switch ── */
+    .toggle { position: relative; width: 40px; height: 22px; }
+    .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
 
     .toggle-track {
       position: absolute;
       inset: 0;
       background: var(--text-subtle);
-      border-radius: 24px;
-      transition: all 0.3s ease;
+      border-radius: 11px;
       cursor: pointer;
-      opacity: 0.6;
+      opacity: 0.5;
+      transition: background 0.2s, opacity 0.2s;
     }
 
     .toggle-thumb {
       position: absolute;
-      width: 18px;
-      height: 18px;
-      left: 3px;
-      top: 3px;
-      background: white;
+      width: 16px; height: 16px;
+      left: 3px; top: 3px;
+      background: #fff;
       border-radius: 50%;
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      transition: transform 0.2s;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
     }
 
-    .toggle input:checked + .toggle-track {
-      background: var(--accent);
-      opacity: 1;
-    }
+    .toggle input:checked + .toggle-track { background: var(--accent); opacity: 1; }
+    .toggle input:checked + .toggle-track .toggle-thumb { transform: translateX(18px); }
 
-    .toggle input:checked + .toggle-track .toggle-thumb {
-      transform: translateX(20px);
-    }
-
-    /* Provider Pills */
+    /* ── Provider Pills ── */
     .pill-group {
       display: flex;
-      gap: 8px;
+      gap: 2px;
       background: var(--input-bg);
-      padding: 4px;
-      border-radius: 8px;
+      padding: 3px;
+      border-radius: 6px;
       border: 1px solid var(--border);
     }
 
     .pill {
-      padding: 6px 16px;
-      border-radius: 6px;
-      font-size: 13px;
+      padding: 5px 14px;
+      border-radius: 4px;
+      font-size: 12px;
       font-weight: 500;
       cursor: pointer;
-      transition: all 0.2s ease;
       color: var(--text-muted);
       border: none;
       background: transparent;
+      font-family: inherit;
     }
 
-    .pill:hover {
-      color: var(--text);
-    }
+    .pill:hover { color: var(--text); }
 
     .pill.active {
       background: var(--bg);
       color: var(--text);
-      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      font-weight: 600;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.12);
     }
 
-    /* Inputs */
+    /* ── Inputs ── */
     .input {
       background: var(--input-bg);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 8px 12px;
+      border: 1px solid var(--input-border);
+      border-radius: 4px;
+      padding: 6px 10px;
       font-size: 13px;
       color: var(--text);
       font-family: inherit;
       outline: none;
-      transition: all 0.2s ease;
-      min-width: 300px;
+      min-width: 280px;
     }
 
-    .input:focus {
-      border-color: var(--accent);
-      background: var(--bg);
-      box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.2);
-    }
+    .input:focus { border-color: var(--accent); }
 
-    .input-mono {
-      font-family: var(--vscode-editor-font-family, monospace);
-    }
+    select.input { cursor: pointer; }
 
-    /* Model Auto-Detection */
+    .input-mono { font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
+
+    /* ── Model Pills ── */
     .model-list {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 12px;
-      max-width: 400px;
+      gap: 6px;
+      margin-top: 10px;
+      max-width: 360px;
       justify-content: flex-end;
     }
 
     .model-pill {
-      padding: 4px 10px;
-      border-radius: 4px;
+      padding: 3px 10px;
+      border-radius: 3px;
       background: var(--input-bg);
       border: 1px solid var(--border);
       font-size: 11px;
       font-family: var(--vscode-editor-font-family, monospace);
       cursor: pointer;
-      transition: all 0.15s ease;
       color: var(--text-muted);
     }
 
-    .model-pill:hover {
-      border-color: var(--accent);
-      color: var(--text);
-    }
+    .model-pill:hover { border-color: var(--accent); color: var(--text); }
 
     .model-pill.active {
       background: var(--accent);
-      color: white;
+      color: #fff;
       border-color: var(--accent);
     }
 
@@ -616,34 +549,27 @@ export class SettingsPanel implements vscode.Disposable {
       font-size: 11px;
       color: var(--accent);
       cursor: pointer;
-      text-decoration: underline;
       background: none;
       border: none;
       font-family: inherit;
+      text-decoration: none;
     }
 
-    /* Buttons */
+    .refresh-btn:hover { text-decoration: underline; }
+
+    /* ── Buttons ── */
     .btn {
-      padding: 8px 20px;
-      border-radius: 6px;
-      font-size: 13px;
+      padding: 6px 16px;
+      border-radius: 4px;
+      font-size: 12px;
       font-weight: 600;
       cursor: pointer;
-      transition: all 0.2s ease;
       border: none;
       font-family: inherit;
     }
 
-    .btn-primary {
-      background: var(--accent);
-      color: white;
-    }
-
-    .btn-primary:hover {
-      background: var(--accent-hover);
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3);
-    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-hover); }
 
     .btn-secondary {
       background: transparent;
@@ -651,45 +577,38 @@ export class SettingsPanel implements vscode.Disposable {
       border: 1px solid var(--border);
     }
 
-    .btn-secondary:hover {
-      background: var(--input-bg);
-    }
+    .btn-secondary:hover { background: rgba(128,128,128,0.08); }
 
-    /* Toast */
+    /* ── Toast ── */
     .toast-container {
       position: fixed;
-      bottom: 32px;
-      right: 32px;
+      bottom: 24px; right: 24px;
       z-index: 1000;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 8px;
     }
 
     .toast {
-      padding: 12px 20px;
-      border-radius: 8px;
-      font-size: 13px;
-      font-weight: 600;
+      padding: 10px 16px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
       background: var(--vscode-notifications-background, var(--bg-subtle));
       color: var(--text);
       border: 1px solid var(--border);
-      box-shadow: 0 8px 24px rgba(0,0,0,0.2);
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      animation: toastIn 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      animation: toastIn 0.2s ease-out;
     }
 
     @keyframes toastIn {
-      from { opacity: 0; transform: translateX(40px); }
-      to { opacity: 1; transform: translateX(0); }
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
     }
 
-    .toast.success { border-left: 4px solid var(--success); }
-    .toast.error { border-left: 4px solid var(--error); }
+    .toast.success { border-left: 3px solid var(--success); }
+    .toast.error { border-left: 3px solid var(--error); }
 
-    /* Hide stuff */
     .hidden { display: none !important; }
   </style>
 </head>
@@ -832,14 +751,77 @@ export class SettingsPanel implements vscode.Disposable {
         <!-- Performance Page -->
         <div class="page" id="page-performance">
           <div class="section">
-            <div class="section-title">Optimization</div>
+            <div class="section-title">Response Tuning</div>
             <div class="setting-row">
               <div class="setting-info">
-                <span class="setting-label">Debounce Latency</span>
-                <span class="setting-desc">Wait time before triggering AI</span>
+                <span class="setting-label">Debounce Delay</span>
+                <span class="setting-desc">Milliseconds to wait after typing before triggering AI (lower = faster, but more requests)</span>
               </div>
               <div class="setting-control">
-                <input type="number" class="input input-mono" id="debounceInput" style="min-width: 100px; width: 100px;">
+                <input type="number" class="input input-mono" id="debounceInput" style="min-width: 100px; width: 100px;" min="50" max="2000" step="50">
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Max Tokens per Completion</span>
+                <span class="setting-desc">Token budget for each suggestion (lower = faster responses, higher = longer code blocks)</span>
+              </div>
+              <div class="setting-control">
+                <input type="number" class="input input-mono" id="maxTokensInput" style="min-width: 100px; width: 100px;" min="16" max="512" step="16">
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Max Context Tokens</span>
+                <span class="setting-desc">How much surrounding code to send to the model (higher = smarter but slower)</span>
+              </div>
+              <div class="setting-control">
+                <input type="number" class="input input-mono" id="maxContextInput" style="min-width: 100px; width: 100px;" min="512" max="32768" step="512">
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Max Completion Lines</span>
+                <span class="setting-desc">Limit the number of lines in a single suggestion</span>
+              </div>
+              <div class="setting-control">
+                <input type="number" class="input input-mono" id="maxLinesInput" style="min-width: 100px; width: 100px;" min="1" max="200" step="5">
+              </div>
+            </div>
+          </div>
+          <div class="section">
+            <div class="section-title">Prefetching &amp; Caching</div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Speculative Prefetch</span>
+                <span class="setting-desc">Pre-compute completions for predicted next cursor positions</span>
+              </div>
+              <div class="setting-control">
+                <label class="toggle">
+                  <input type="checkbox" id="togglePrefetch" data-key="prefetchEnabled">
+                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                </label>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Completion Cache</span>
+                <span class="setting-desc">Cache recent completions for instant replay on revisited lines</span>
+              </div>
+              <div class="setting-control">
+                <label class="toggle">
+                  <input type="checkbox" id="toggleCache" data-key="cacheEnabled">
+                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                </label>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Cache TTL</span>
+                <span class="setting-desc">Seconds before cached completions expire</span>
+              </div>
+              <div class="setting-control">
+                <input type="number" class="input input-mono" id="cacheTTLInput" style="min-width: 100px; width: 100px;" min="30" max="3600" step="30">
               </div>
             </div>
           </div>
@@ -848,19 +830,43 @@ export class SettingsPanel implements vscode.Disposable {
         <!-- Advanced Page -->
         <div class="page" id="page-advanced">
           <div class="section">
-            <div class="section-title">System</div>
+            <div class="section-title">Intelligence</div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Style Learning</span>
+                <span class="setting-desc">Automatically learn your project's naming conventions, indentation, and patterns</span>
+              </div>
+              <div class="setting-control">
+                <label class="toggle">
+                  <input type="checkbox" id="toggleStyleLearn" data-key="styleLearnEnabled">
+                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="section">
+            <div class="section-title">Diagnostics</div>
             <div class="setting-row">
               <div class="setting-info">
                 <span class="setting-label">Log Level</span>
-                <span class="setting-desc">Internal engine verbosity</span>
+                <span class="setting-desc">Control how much internal detail is logged to the output channel</span>
               </div>
               <div class="setting-control">
-                <select class="input" id="logLevelSelect" style="min-width: 120px;">
+                <select class="input" id="logLevelSelect" style="min-width: 140px;">
                   <option value="debug">Debug</option>
                   <option value="info">Info</option>
                   <option value="warn">Warning</option>
                   <option value="error">Error</option>
                 </select>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Output Log</span>
+                <span class="setting-desc">Open the AutoCode output channel to inspect engine internals</span>
+              </div>
+              <div class="setting-control">
+                <button class="btn btn-secondary" id="openLogBtn">Open Log</button>
               </div>
             </div>
           </div>
@@ -883,7 +889,7 @@ export class SettingsPanel implements vscode.Disposable {
       const m = e.data;
       if (m.type === 'configUpdate') {
         config = m.config;
-        availableModels = m.availableModels || [];
+        availableModels = config.availableModels || [];
         render();
       }
       if (m.type === 'modelsFetched') {
@@ -906,9 +912,8 @@ export class SettingsPanel implements vscode.Disposable {
         document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
         const pageId = item.dataset.page;
         document.getElementById('page-' + pageId).classList.add('active');
-        
         const titles = { general: 'General', models: 'Models', performance: 'Performance', advanced: 'Advanced' };
-        const descs = { general: 'Configure provider and core services', models: 'Select and configure your AI model', performance: 'Fine-tune speed and resource usage', advanced: 'Internal engine settings' };
+        const descs = { general: 'Configure provider and core services', models: 'Select and configure your AI model', performance: 'Fine-tune speed and resource usage', advanced: 'Intelligence and diagnostics' };
         document.getElementById('pageTitle').textContent = titles[pageId];
         document.getElementById('pageDesc').textContent = descs[pageId];
       });
@@ -919,14 +924,13 @@ export class SettingsPanel implements vscode.Disposable {
       pill.addEventListener('click', () => {
         const provider = pill.dataset.provider;
         vscode.postMessage({ type: 'saveConfig', key: 'provider', value: provider });
-        
         if (provider === 'ollama') {
            vscode.postMessage({ type: 'fetchModels' });
         }
       });
     });
 
-    // Save Keys
+    // Save API Key
     document.getElementById('saveKeyBtn').addEventListener('click', () => {
       const key = document.getElementById('apiKeyInput').value;
       if (key) {
@@ -945,22 +949,44 @@ export class SettingsPanel implements vscode.Disposable {
       vscode.postMessage({ type: 'fetchModels' });
     });
 
-    // Toggles
+    // Open Log
+    document.getElementById('openLogBtn').addEventListener('click', () => {
+      vscode.postMessage({ type: 'openOutputLog' });
+    });
+
+    // Toggles (auto-save on change)
     document.querySelectorAll('.toggle input').forEach(input => {
       input.addEventListener('change', () => {
         vscode.postMessage({ type: 'saveConfig', key: input.dataset.key, value: input.checked });
       });
     });
 
-    // Inputs
-    ['modelInput', 'endpointInput', 'debounceInput'].forEach(id => {
-       const el = document.getElementById(id);
-       el.addEventListener('blur', () => {
-         const key = id === 'modelInput' ? 'model' : id === 'endpointInput' ? 'apiEndpoint' : 'debounceMs';
-         let val = el.value;
-         if (id === 'debounceInput') val = parseInt(val);
-         vscode.postMessage({ type: 'saveConfig', key, value: val });
-       });
+    // Log Level select
+    document.getElementById('logLevelSelect').addEventListener('change', (e) => {
+      vscode.postMessage({ type: 'saveConfig', key: 'logLevel', value: e.target.value });
+    });
+
+    // Number/Text inputs (auto-save on blur)
+    const inputMap = {
+      modelInput: { key: 'model', type: 'string' },
+      endpointInput: { key: 'apiEndpoint', type: 'string' },
+      debounceInput: { key: 'debounceMs', type: 'number' },
+      maxTokensInput: { key: 'maxTokens', type: 'number' },
+      maxContextInput: { key: 'maxContextTokens', type: 'number' },
+      maxLinesInput: { key: 'maxCompletionLines', type: 'number' },
+      cacheTTLInput: { key: 'cacheTTLSeconds', type: 'number' }
+    };
+    Object.entries(inputMap).forEach(([id, spec]) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('blur', () => {
+        const val = spec.type === 'number' ? parseInt(el.value) : el.value;
+        if (spec.type === 'number' && isNaN(val)) return;
+        vscode.postMessage({ type: 'saveConfig', key: spec.key, value: val });
+      });
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') el.blur();
+      });
     });
 
     function render() {
@@ -969,30 +995,36 @@ export class SettingsPanel implements vscode.Disposable {
         p.classList.toggle('active', p.dataset.provider === config.provider);
       });
 
-      // API Key Row
+      // API Key Row (hidden for Ollama)
       document.getElementById('apiKeyRow').classList.toggle('hidden', config.provider === 'ollama');
 
       // Toggles
-      document.getElementById('toggleEnabled').checked = config.enabled;
-      document.getElementById('toggleStreaming').checked = config.streamingEnabled;
+      document.getElementById('toggleEnabled').checked = !!config.enabled;
+      document.getElementById('toggleStreaming').checked = !!config.streamingEnabled;
+      document.getElementById('togglePrefetch').checked = !!config.prefetchEnabled;
+      document.getElementById('toggleCache').checked = !!config.cacheEnabled;
+      document.getElementById('toggleStyleLearn').checked = !!config.styleLearnEnabled;
 
-      // Inputs
+      // Text/Number Inputs
       document.getElementById('modelInput').value = config.model || '';
       document.getElementById('endpointInput').value = config.apiEndpoint || '';
-      document.getElementById('debounceInput').value = config.debounceMs;
+      document.getElementById('debounceInput').value = config.debounceMs || 150;
+      document.getElementById('maxTokensInput').value = config.maxTokens || 64;
+      document.getElementById('maxContextInput').value = config.maxContextTokens || 8192;
+      document.getElementById('maxLinesInput').value = config.maxCompletionLines || 50;
+      document.getElementById('cacheTTLInput').value = config.cacheTTLSeconds || 300;
+
+      // Log Level
+      document.getElementById('logLevelSelect').value = config.logLevel || 'info';
 
       // Ollama Container
       document.getElementById('ollamaModelContainer').classList.toggle('hidden', config.provider !== 'ollama');
-      
-      if (config.provider === 'ollama') {
-          renderModelPills();
-      }
+      if (config.provider === 'ollama') renderModelPills();
     }
 
     function renderModelPills() {
       const list = document.getElementById('modelPillList');
       list.innerHTML = '';
-      
       availableModels.forEach(m => {
         const pill = document.createElement('div');
         pill.className = 'model-pill' + (config.model === m ? ' active' : '');
@@ -1002,9 +1034,8 @@ export class SettingsPanel implements vscode.Disposable {
         });
         list.appendChild(pill);
       });
-
       if (availableModels.length === 0) {
-          list.innerHTML = '<span style="font-size:10px; color:var(--error);">No models found.</span>';
+        list.innerHTML = '<span style="font-size:11px; color:var(--text-muted);">No models detected. Is Ollama running?</span>';
       }
     }
 
@@ -1016,6 +1047,7 @@ export class SettingsPanel implements vscode.Disposable {
       container.appendChild(el);
       setTimeout(() => {
         el.style.opacity = '0';
+        el.style.transition = 'opacity 0.4s';
         setTimeout(() => el.remove(), 400);
       }, 3000);
     }

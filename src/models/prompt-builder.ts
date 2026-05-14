@@ -113,6 +113,8 @@ STRICT RULES:
 - Return ONLY the code to insert.
 - NO markdown, NO code blocks, NO natural language explanation.
 - Match existing indentation and style perfectly.
+- Use the provided <diagnostics>, <symbols>, and <related_files> tags to ensure 100% accuracy and avoid common bugs.
+- If errors are present in <diagnostics>, your suggestion MUST aim to fix them or be compatible with the fix.
 - STOP if you reach the next logical block or duplicate suffix code.
 - Do NOT repeat the prefix or suffix already shown in the FIM block.`;
   }

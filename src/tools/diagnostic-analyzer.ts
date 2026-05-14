@@ -16,6 +16,7 @@ export interface DiagnosticSummary {
   code?: string | number | { value: string | number; target: vscode.Uri };
   relatedInformation?: string[];
   snippet?: string;
+  fixes?: string[];
 }
 
 export class DiagnosticAnalyzer {

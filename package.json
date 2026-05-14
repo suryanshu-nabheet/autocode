@@ -2,7 +2,7 @@
   "name": "autocode",
   "displayName": "AutoCode — Autonomous Code Engine",
   "description": "Pure AI code completion engine for VS Code. High-performance, context-aware inline completions.",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "publisher": "suryanshu-nabheet",
   "license": "MIT",
   "repository": {
@@ -197,6 +197,11 @@
             "error"
           ],
           "description": "Logging level"
+        },
+        "autocode.maxTokens": {
+          "type": "number",
+          "default": 64,
+          "description": "Maximum tokens per completion response"
         }
       }
     }

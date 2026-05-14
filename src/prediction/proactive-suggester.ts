@@ -37,7 +37,7 @@ export class ProactiveSuggester implements vscode.Disposable {
   // Idle detection
   private idleTimer: NodeJS.Timeout | null = null;
   private lastActivity = Date.now();
-  private readonly IDLE_THRESHOLD_MS = 800; // Trigger after 800ms idle
+  private readonly IDLE_THRESHOLD_MS = 400; // Super snappy: 400ms idle trigger
   
   // Cursor history for pattern detection
   private cursorHistory: CursorHistoryEntry[] = [];
@@ -143,6 +143,11 @@ export class ProactiveSuggester implements vscode.Disposable {
         }
       });
     }, this.IDLE_THRESHOLD_MS);
+
+    // CONTINUOUS FLOW: Immediate trigger for high-confidence structural positions
+    if (strategic.shouldTrigger && strategic.confidence > 0.9) {
+        this.triggerCompletion(position);
+    }
   }
 
   /**
@@ -200,7 +205,7 @@ export class ProactiveSuggester implements vscode.Disposable {
       }
     }
 
-    if (trigger && trigger.confidence >= 0.70) {
+    if (trigger && trigger.confidence >= 0.60) {
       this.logger.debug('Proactive trigger', { type: trigger.type, confidence: trigger.confidence });
       this.eventBus.emit({
         type: 'proactive_suggestion',

@@ -35,6 +35,7 @@ export interface AutoCodeConfig {
   styleLearnEnabled: boolean;
   telemetryEnabled: boolean;
   logLevel: LogLevel;
+  maxTokens: number;
 }
 
 /**
@@ -174,12 +175,13 @@ export interface CompletionResult {
   insertText: string;
   range: vscode.Range;
   confidence: number;
-  source: 'inline' | 'block';
+  source: 'inline' | 'block' | 'streaming';
   metadata: {
-    modelLatencyMs: number;
-    contextTokens: number;
-    completionTokens: number;
+    modelLatencyMs?: number;
+    contextTokens?: number;
+    completionTokens?: number;
     cached: boolean;
+    crossFile?: boolean;
   };
 }
 

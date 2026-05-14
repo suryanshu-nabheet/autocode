@@ -241,12 +241,35 @@ export class AutoCodeCompletionProvider
               return;
           }
 
-          const completion = await this.predictionEngine.getCompletion(document, position, projectContext, token);
+          const completion = await this.predictionEngine.getCompletion(document, position, projectContext, token, (partialText) => {
+              // PARTIAL UPDATE: Store in cache and re-trigger
+              const partialResult: CompletionResult = {
+                  id: fetchKey,
+                  text: partialText,
+                  insertText: partialText,
+                  range: new vscode.Range(position, position),
+                  confidence: 0.5,
+                  source: 'streaming',
+                  metadata: { cached: false }
+              };
+              
+              this.multiFileCache.set(
+                  document.uri.toString(),
+                  position,
+                  linePrefix,
+                  document.languageId,
+                  partialResult,
+                  relatedFiles.map(f => f.toString())
+              );
+
+              // Re-trigger VS Code to show the new partial text
+              vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
+          });
 
           if (completion && !token.isCancellationRequested && !controller.signal.aborted) {
               this.prefetchResult = { key: fetchKey, result: completion };
               
-              // Store in multi-file cache with dependencies
+              // Store final result in cache
               this.multiFileCache.set(
                   document.uri.toString(),
                   position,
@@ -255,12 +278,6 @@ export class AutoCodeCompletionProvider
                   completion,
                   relatedFiles.map(f => f.toString())
               );
-
-              // If the user is still at the same position, we can try to re-trigger VS Code
-              const currentPos = vscode.window.activeTextEditor?.selection.active;
-              if (currentPos && currentPos.isEqual(position)) {
-                  vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
-              }
               
               // Schedule smart prefetch for next positions
               this.smartPrefetcher.schedulePrefetch(document, position, 'background_fetch');

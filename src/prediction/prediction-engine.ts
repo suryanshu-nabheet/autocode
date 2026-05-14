@@ -45,7 +45,8 @@ export class PredictionEngine implements vscode.Disposable {
     document: vscode.TextDocument,
     position: vscode.Position,
     context: ProjectContext,
-    token: vscode.CancellationToken
+    token: vscode.CancellationToken,
+    onPartial?: (text: string) => void
   ): Promise<CompletionResult | null> {
     const cursorLine = document.lineAt(position.line).text;
     const linePrefix = cursorLine.substring(0, position.character);
@@ -61,23 +62,43 @@ export class PredictionEngine implements vscode.Disposable {
 
     // 2. Prompt Construction
     const prompt = this.promptBuilder.buildCompletionPrompt(context);
-    
-    // 3. Model Inference
+
+    // 3. Model Inference with Adaptive Latency Control
+    const startTime = Date.now();
     const request: ModelRequest = {
       prompt,
-      maxTokens: 128, // Small for speed, most completions are short
-      temperature: 0, // Deterministic for better caching
-      stopSequences: ['<|fim_suffix|>', '<|file_separator|>', '\n\n', '```'],
+      maxTokens: Number(this.config.getValue('maxTokens')) || 64, // Use config or small default
+      temperature: 0,
+      stopSequences: ['<|fim_suffix|>', '<|file_separator|>', '\n\n', '```', 'class ', 'function ', 'export '],
       stream: this.config.getValue('streamingEnabled'),
     };
 
     try {
       let response: ModelResponse;
-      if (this.config.getValue('streamingEnabled')) {
-        response = await this.modelLayer.stream(request, () => { /* no-op: inline completions render atomically */ }, token);
-      } else {
-        response = await this.modelLayer.complete(request);
-      }
+      
+      // RACING: Hard timeout for the entire operation to prevent user frustration
+      const timeoutPromise = new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error('Generation Timeout')), 8000) // 8s hard limit
+      );
+
+      const fetchPromise = (async () => {
+        if (this.config.getValue('streamingEnabled')) {
+          let partialText = '';
+          return await this.modelLayer.stream(request, (chunk) => {
+            if (chunk.text) {
+                partialText += chunk.text;
+                if (onPartial) {
+                    const processed = this.postProcess(partialText, linePrefix);
+                    if (processed) onPartial(processed);
+                }
+            }
+          }, token);
+        } else {
+          return await this.modelLayer.complete(request);
+        }
+      })();
+
+      response = await Promise.race([fetchPromise, timeoutPromise]);
       if (token.isCancellationRequested) return null;
 
       // 4. Post-processing

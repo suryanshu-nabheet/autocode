@@ -26,6 +26,7 @@ const DEFAULT_CONFIG: AutoCodeConfig = {
   styleLearnEnabled: true,
   telemetryEnabled: false,
   logLevel: 'info',
+  maxTokens: 64,
 };
 
 export class ConfigManager implements vscode.Disposable {
@@ -182,6 +183,7 @@ export class ConfigManager implements vscode.Disposable {
       styleLearnEnabled: wsConfig.get<boolean>('styleLearnEnabled', DEFAULT_CONFIG.styleLearnEnabled),
       telemetryEnabled: wsConfig.get<boolean>('telemetryEnabled', DEFAULT_CONFIG.telemetryEnabled),
       logLevel: wsConfig.get<LogLevel>('logLevel', DEFAULT_CONFIG.logLevel),
+      maxTokens: wsConfig.get<number>('maxTokens', DEFAULT_CONFIG.maxTokens),
     };
   }
 
