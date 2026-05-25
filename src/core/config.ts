@@ -13,11 +13,11 @@ const CONFIG_SECTION = 'autocode';
 const DEFAULT_CONFIG: AutoCodeConfig = {
   enabled: true,
   provider: 'ollama',
-  model: 'qwen3.5:4b',
+  model: 'qwen2.5-coder:1.5b',
   apiKey: '',
   apiEndpoint: 'http://localhost:11434',
-  maxContextTokens: 8192,
-  debounceMs: 150,
+  maxContextTokens: 6144,
+  debounceMs: 80,
   prefetchEnabled: true,
   maxCompletionLines: 50,
   streamingEnabled: true,
@@ -25,8 +25,8 @@ const DEFAULT_CONFIG: AutoCodeConfig = {
   cacheTTLSeconds: 300,
   styleLearnEnabled: true,
   telemetryEnabled: false,
-  logLevel: 'info',
-  maxTokens: 64,
+  logLevel: 'warn',
+  maxTokens: 96,
 };
 
 export class ConfigManager implements vscode.Disposable {

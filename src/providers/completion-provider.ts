@@ -29,7 +29,7 @@ export class AutoCodeCompletionProvider
   private predictionEngine: PredictionEngine;
   private perfMonitor: PerformanceMonitor;
   private multiFileCache: MultiFileCache;
-  private proactiveSuggester: ProactiveSuggester;
+  private proactiveSuggester: ProactiveSuggester | { dispose: () => void };
   private smartPrefetcher: SmartPrefetcher;
 
   /** Currently shown completion (for partial acceptance) */
@@ -65,16 +65,23 @@ export class AutoCodeCompletionProvider
       contextEngine,
       predictionEngine
     );
-    this.proactiveSuggester = new ProactiveSuggester(
-      this.multiFileCache,
-      (pos) => this.triggerAtPosition(pos)
-    );
+    if (this.config.getValue('prefetchEnabled')) {
+      this.proactiveSuggester = new ProactiveSuggester(
+        this.multiFileCache,
+        () => this.triggerAtPosition()
+      );
+    } else {
+      this.proactiveSuggester = { dispose: () => undefined } as ProactiveSuggester;
+    }
   }
   
   /**
    * Trigger completion at specific position (for proactive suggester)
    */
-  private triggerAtPosition(position: vscode.Position): void {
+  private triggerAtPosition(): void {
+    if (!this.config.getValue('enabled')) {
+      return;
+    }
     vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
   }
 
@@ -123,9 +130,14 @@ export class AutoCodeCompletionProvider
 
     this.lastPosition = position;
 
+    // Pre-warm agentic context while we check caches
+    this.contextEngine.warmBackgroundContext(document, position);
+
     // 2. ULTRA-FAST PATH: Multi-File L1 Cache (Sub-millisecond)
     const uri = document.uri.toString();
-    const l1Result = this.multiFileCache.get(uri, position, linePrefix, document.languageId);
+    const l1Result = this.config.getValue('cacheEnabled')
+      ? this.multiFileCache.get(uri, position, linePrefix, document.languageId)
+      : null;
     
     if (l1Result) {
         this.logger.debug(`L${l1Result.level} cache hit in ${l1Result.metadata.latencyMs?.toFixed(2) ?? '<1'}ms`);
@@ -136,14 +148,15 @@ export class AutoCodeCompletionProvider
         this.currentCompletion = l1Result.result;
         this.acceptedOffset = 0;
         
-        // Schedule smart prefetch for next positions
-        this.smartPrefetcher.schedulePrefetch(document, position, 'cache_hit');
+        if (this.config.getValue('prefetchEnabled')) {
+          this.smartPrefetcher.schedulePrefetch(document, position, 'cache_hit');
+        }
         return [this.createInlineItem(l1Result.result, position, document)];
     }
 
-    // 3. CROSS-FILE PATTERN MATCH: Check similar patterns in related files
+    // 3. CROSS-FILE PATTERN MATCH
     const relatedFiles = this.getRelatedFiles(document);
-    if (relatedFiles.length > 0) {
+    if (this.config.getValue('cacheEnabled') && relatedFiles.length > 0) {
         const crossFileResult = this.multiFileCache.findCrossFilePattern(
             linePrefix,
             document.languageId,
@@ -174,10 +187,14 @@ export class AutoCodeCompletionProvider
         this.acceptedOffset = 0;
         
         // Store in multi-file cache
-        this.multiFileCache.set(uri, position, linePrefix, document.languageId, res, relatedFiles.map(f => f.toString()));
+        if (this.config.getValue('cacheEnabled')) {
+          this.multiFileCache.set(uri, position, linePrefix, document.languageId, res, relatedFiles.map(f => f.toString()));
+        }
         
         // Trigger smart prefetching for next positions
-        this.smartPrefetcher.schedulePrefetch(document, position, 'prefetch_hit');
+        if (this.config.getValue('prefetchEnabled')) {
+          this.smartPrefetcher.schedulePrefetch(document, position, 'prefetch_hit');
+        }
         return [this.createInlineItem(res, position, document)];
     }
 
@@ -253,14 +270,16 @@ export class AutoCodeCompletionProvider
                   metadata: { cached: false }
               };
               
-              this.multiFileCache.set(
+              if (this.config.getValue('cacheEnabled')) {
+                this.multiFileCache.set(
                   document.uri.toString(),
                   position,
                   linePrefix,
                   document.languageId,
                   partialResult,
                   relatedFiles.map(f => f.toString())
-              );
+                );
+              }
 
               // Re-trigger VS Code to show the new partial text
               vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
@@ -270,17 +289,21 @@ export class AutoCodeCompletionProvider
               this.prefetchResult = { key: fetchKey, result: completion };
               
               // Store final result in cache
-              this.multiFileCache.set(
+              if (this.config.getValue('cacheEnabled')) {
+                this.multiFileCache.set(
                   document.uri.toString(),
                   position,
                   linePrefix,
                   document.languageId,
                   completion,
                   relatedFiles.map(f => f.toString())
-              );
+                );
+              }
               
               // Schedule smart prefetch for next positions
-              this.smartPrefetcher.schedulePrefetch(document, position, 'background_fetch');
+              if (this.config.getValue('prefetchEnabled')) {
+                this.smartPrefetcher.schedulePrefetch(document, position, 'background_fetch');
+              }
           }
       } catch (err) {
           this.logger.debug('Background fetch failed', err);

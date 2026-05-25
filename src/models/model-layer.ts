@@ -93,7 +93,7 @@ export class ModelLayer implements vscode.Disposable {
     const controller = new AbortController();
     this.pendingRequests.set(category, controller);
 
-    const timeoutMs = category === 'completion' ? 15000 : 30000;
+    const timeoutMs = category === 'completion' ? 6000 : 30000;
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     await this.rateLimit();
@@ -135,7 +135,7 @@ export class ModelLayer implements vscode.Disposable {
     const controller = new AbortController();
     this.pendingRequests.set(category, controller);
 
-    const timeoutMs = category === 'completion' ? 15000 : 30000;
+    const timeoutMs = category === 'completion' ? 6000 : 30000;
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     await this.rateLimit();

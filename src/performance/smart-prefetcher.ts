@@ -14,6 +14,7 @@ import { Logger } from '../core/logger';
 import { MultiFileCache } from '../cache/multi-file-cache';
 import { ContextEngine } from '../context/context-engine';
 import { PredictionEngine } from '../prediction/prediction-engine';
+import { ConfigManager } from '../core/config';
 
 interface PrefetchTarget {
   uri: string;
@@ -87,6 +88,9 @@ export class SmartPrefetcher implements vscode.Disposable {
     currentPosition: vscode.Position,
     reason: string = 'explicit'
   ): void {
+    if (!ConfigManager.getInstance().getValue('prefetchEnabled')) {
+      return;
+    }
     const targets = this.generatePrefetchTargets(document, currentPosition, reason);
     
     for (const target of targets) {

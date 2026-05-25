@@ -72,7 +72,7 @@ export class PromptBuilder {
     const prompt = sections.filter(Boolean).join('\n\n');
 
     // Final guard: if prompt is enormous, drop lowest-priority sections
-    const MAX_PROMPT_CHARS = 12000;
+    const MAX_PROMPT_CHARS = 10000;
     if (prompt.length > MAX_PROMPT_CHARS) {
       this.logger.warn(`Prompt exceeded ${MAX_PROMPT_CHARS} chars (${prompt.length}), truncating low-priority sections`);
       const prioritySections = [
@@ -137,8 +137,8 @@ Constants: ${conventions.constants}
     const fileSummaries = context.relatedFiles
       .slice(0, 5)
       .map((f) => {
-        const content = f.content.length > 200
-          ? f.content.substring(0, 200) + '\n// ... (truncated)'
+        const content = f.content.length > 140
+          ? f.content.substring(0, 140) + '\n// …'
           : f.content;
         return `--- ${f.relativePath} (${f.languageId}) ---\n${content}`;
       })

@@ -54,10 +54,11 @@ export class PredictionEngine implements vscode.Disposable {
     // 1. FAST-PATH: Immediate Cache Lookup (Sub-millisecond)
     const cacheKey = `${document.uri.toString()}:${position.line}:${linePrefix}`;
     const contextHash = this.cache.generateHash(context.currentFile.precedingLines);
-    const cached = await this.cache.get(cacheKey, contextHash);
-
-    if (cached) {
-      return cached;
+    if (this.config.getValue('cacheEnabled')) {
+      const cached = await this.cache.get(cacheKey, contextHash);
+      if (cached) {
+        return cached;
+      }
     }
 
     // 2. Prompt Construction
@@ -78,7 +79,7 @@ export class PredictionEngine implements vscode.Disposable {
       
       // RACING: Hard timeout for the entire operation to prevent user frustration
       const timeoutPromise = new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error('Generation Timeout')), 8000) // 8s hard limit
+        setTimeout(() => reject(new Error('Generation Timeout')), 4500)
       );
 
       const fetchPromise = (async () => {
@@ -120,8 +121,9 @@ export class PredictionEngine implements vscode.Disposable {
         },
       };
 
-      // 5. Update Cache
-      this.cache.set(cacheKey, result, contextHash);
+      if (this.config.getValue('cacheEnabled')) {
+        this.cache.set(cacheKey, result, contextHash);
+      }
 
       return result;
     } catch (err) {
@@ -150,7 +152,10 @@ export class PredictionEngine implements vscode.Disposable {
 
     // Clean up
     processed = processed.split('<|')[0]; // Remove any other markers
-    processed = processed.split('\r?\n\r?\n')[0]; // Double newline is often a stop sign
+    const doubleNl = processed.search(/\n\s*\n/);
+    if (doubleNl >= 0) {
+      processed = processed.substring(0, doubleNl);
+    }
     
     if (processed.length === 0 || processed.length > 500) return '';
 

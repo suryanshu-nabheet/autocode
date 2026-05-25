@@ -28,6 +28,7 @@ import { GitAnalyzer } from './analyzers/git-analyzer';
 import { StyleAnalyzer } from '../style-learning/style-analyzer';
 import { SemanticResolver } from './semantic-resolver';
 import { ContextRanker } from './context-ranker';
+import { withTimeout } from '../utils/timeout';
 
 // Agentic Tools
 import { DiagnosticAnalyzer } from '../tools/diagnostic-analyzer';
@@ -37,9 +38,11 @@ import { HistoryTool } from '../tools/history-tool';
 import { ProjectGraphTool } from '../tools/project-graph-tool';
 import { SymbolUsageTool } from '../tools/symbol-usage-tool';
 
-const CURSOR_WINDOW_LINES = 60;
-const MAX_RELATED_FILES = 8;
-const MAX_SYMBOLS = 100;
+const CURSOR_WINDOW_LINES = 40;
+const MAX_RELATED_FILES = 5;
+const MAX_SYMBOLS = 60;
+const SIGNATURE_TIMEOUT_MS = 180;
+const RELATED_FILES_TIMEOUT_MS = 120;
 
 export class ContextEngine implements vscode.Disposable {
   private config: ConfigManager;
@@ -118,22 +121,41 @@ export class ContextEngine implements vscode.Disposable {
         }
     }
 
-    // 2. CRITICAL PATH (Must be fast)
+    // 2. CRITICAL PATH (bounded latency)
     const isStale = this.lastVersion !== document.version;
-    const symbols = isStale ? await this.symbolAnalyzer.getSymbols(document, token, MAX_SYMBOLS) : this.cachedSymbols;
     const imports = isStale ? this.importAnalyzer.analyzeImports(document) : this.cachedImports;
-    const diagAnalys = await this.diagnosticAnalyzer.analyzeDiagnostics(document, position);
+    const diagAnalys = this.diagnosticAnalyzer.analyzeDiagnostics(document, position);
+
+    const [symbols, resolvedSignatures] = await Promise.all([
+      isStale
+        ? withTimeout(
+            this.symbolAnalyzer.getSymbols(document, token, MAX_SYMBOLS),
+            120,
+            this.cachedSymbols
+          )
+        : Promise.resolve(this.cachedSymbols),
+      withTimeout(
+        this.semanticResolver.resolveImportSignatures(document, imports, token),
+        SIGNATURE_TIMEOUT_MS,
+        (this.backgroundContext.resolvedSignatures as string[]) || []
+      ),
+    ]);
 
     if (isStale || diagAnalys.length > 0) {
       this.cachedSymbols = symbols;
       this.cachedImports = imports;
       this.lastVersion = document.version;
-      // Trigger background refresh on document change or error detection
-      this.refreshBackgroundContext(document, position, diagAnalys.length > 0);
+      this.refreshBackgroundContext(document, position, imports, symbols, diagAnalys.length > 0);
     }
 
-    // 3. ASSEMBLE (Using warm background data)
-    const projectStyle = await this.styleAnalyzer.analyzeStyle(document);
+    // 3. ASSEMBLE (warm background + cached style)
+    const projectStyle = this.config.getValue('styleLearnEnabled')
+      ? await withTimeout(
+          this.styleAnalyzer.analyzeStyle(document),
+          80,
+          this.styleAnalyzer.getDefaultStyle()
+        )
+      : this.styleAnalyzer.getDefaultStyle();
     
     const context: ProjectContext = {
       currentFile: cursorContext,
@@ -144,7 +166,10 @@ export class ContextEngine implements vscode.Disposable {
       gitDiffs: (this.backgroundContext.gitDiffs || []) as GitDiff[],
       recentEdits: this.getRecentEdits(),
       projectStyle,
-      resolvedSignatures: (this.backgroundContext.resolvedSignatures || []) as string[],
+      resolvedSignatures:
+        resolvedSignatures.length > 0
+          ? resolvedSignatures
+          : ((this.backgroundContext.resolvedSignatures || []) as string[]),
       diagnostics: vscode.languages.getDiagnostics(document.uri),
       diagnosticSummary: this.diagnosticAnalyzer.formatForPrompt(diagAnalys),
       importSuggestions: (this.backgroundContext.importSuggestions || '') as string,
@@ -161,7 +186,20 @@ export class ContextEngine implements vscode.Disposable {
     return compressed;
   }
 
-  private async refreshBackgroundContext(document: vscode.TextDocument, position: vscode.Position, prioritizeErrors: boolean = false) {
+  /** Warm agentic context without blocking the inline-completion critical path. */
+  public warmBackgroundContext(document: vscode.TextDocument, position: vscode.Position): void {
+    const imports = this.importAnalyzer.analyzeImports(document);
+    const symbols = this.cachedSymbols.length > 0 ? this.cachedSymbols : [];
+    this.refreshBackgroundContext(document, position, imports, symbols, false);
+  }
+
+  private async refreshBackgroundContext(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    imports: ImportInfo[],
+    symbols: SymbolInfo[],
+    prioritizeErrors: boolean = false
+  ) {
     if (this.isBackgroundUpdating && !prioritizeErrors) return;
     this.isBackgroundUpdating = true;
 
@@ -173,32 +211,62 @@ export class ContextEngine implements vscode.Disposable {
 
       const [
         openFiles,
-        gitDiffs,
+        relatedFiles,
         importAnalys,
-        fileHistory,
-        projectRel,
         definitions,
-        usages
+        usages,
+        projectRel,
       ] = await Promise.all([
         this.getOpenFileContexts(document.uri).catch(safe('openFiles', [])),
-        this.gitAnalyzer.getRecentDiffs().catch(safe('gitDiffs', [])),
+        withTimeout(
+          this.findRelatedFiles(document, imports, symbols),
+          RELATED_FILES_TIMEOUT_MS,
+          (this.backgroundContext.relatedFiles as FileContext[]) || []
+        ),
         this.importTool.getImportPrompt(document).catch(safe('importPrompt', '')),
-        this.historyTool.getFileHistory(document.uri.fsPath).catch(safe('fileHistory', [])),
+        withTimeout(
+          this.definitionTool.resolveDefinition(document, position).catch(safe('definitions', null)),
+          200,
+          null
+        ),
+        withTimeout(
+          this.symbolUsageTool.findUsages(document, position).catch(safe('symbolUsages', [])),
+          200,
+          [] as any[]
+        ),
         this.projectGraphTool.findRelatedFiles(document).catch(safe('projectGraph', [])),
-        this.definitionTool.resolveDefinition(document, position).catch(safe('definitions', null)),
-        this.symbolUsageTool.findUsages(document, position).catch(safe('symbolUsages', []))
       ]);
+
+      const bgSignatures = await withTimeout(
+        this.semanticResolver.resolveImportSignatures(
+          document,
+          imports,
+          new vscode.CancellationTokenSource().token
+        ),
+        SIGNATURE_TIMEOUT_MS,
+        (this.backgroundContext.resolvedSignatures as string[]) || []
+      );
 
       this.backgroundContext = {
         openFiles: openFiles as FileContext[],
-        gitDiffs: gitDiffs as GitDiff[],
+        relatedFiles: relatedFiles as FileContext[],
+        gitDiffs: (this.backgroundContext.gitDiffs || []) as GitDiff[],
         importSuggestions: importAnalys as string,
-        fileHistory: this.historyTool.formatForPrompt(fileHistory as any),
+        fileHistory: (this.backgroundContext.fileHistory || '') as string,
         projectRelationships: this.projectGraphTool.formatForPrompt(projectRel as any),
         resolvedDefinitions: definitions ? this.definitionTool.formatForPrompt([definitions]) : '',
-        symbolUsages: usages.length > 0 ? this.symbolUsageTool.formatForPrompt(usages) : '',
-        // If prioritizeErrors is true, we could add even more specific lookups here
+        symbolUsages: (usages as any[]).length > 0 ? this.symbolUsageTool.formatForPrompt(usages as any) : '',
+        resolvedSignatures: bgSignatures,
       };
+
+      void Promise.all([
+        this.gitAnalyzer.getRecentDiffs().then((gitDiffs) => {
+          this.backgroundContext.gitDiffs = gitDiffs;
+        }),
+        this.historyTool.getFileHistory(document.uri.fsPath).then((fileHistory) => {
+          this.backgroundContext.fileHistory = this.historyTool.formatForPrompt(fileHistory as any);
+        }),
+      ]).catch(() => undefined);
 
       if (prioritizeErrors) {
           this.logger.debug('Prioritizing error correction context');

@@ -1,7 +1,7 @@
 {
   "name": "autocode",
   "displayName": "AutoCode — Autonomous Code Engine",
-  "description": "Pure AI code completion engine for VS Code. High-performance, context-aware inline completions.",
+  "description": "Fast, context-aware Tab code completion for VS Code. Agentic project context, streaming ghost text, local or cloud models.",
   "version": "0.0.1",
   "publisher": "suryanshu-nabheet",
   "license": "MIT",
@@ -72,18 +72,6 @@
         "title": "AutoCode: Check Connection Status"
       },
       {
-        "command": "autocode.analyzeBuild",
-        "title": "AutoCode: Build Report"
-      },
-      {
-        "command": "autocode.optimizeExtension",
-        "title": "AutoCode: Optimize Extension"
-      },
-      {
-        "command": "autocode.analyzeProjectFiles",
-        "title": "AutoCode: Analyze Project Files"
-      },
-      {
         "command": "autocode.onCompletionAccepted",
         "title": "AutoCode: Completion Accepted (Internal)"
       }
@@ -144,12 +132,12 @@
         },
         "autocode.maxContextTokens": {
           "type": "number",
-          "default": 8192,
+          "default": 6144,
           "description": "Maximum context window tokens to send to the model"
         },
         "autocode.debounceMs": {
           "type": "number",
-          "default": 150,
+          "default": 80,
           "description": "Debounce delay in milliseconds before triggering completion"
         },
         "autocode.prefetchEnabled": {
@@ -189,7 +177,7 @@
         },
         "autocode.logLevel": {
           "type": "string",
-          "default": "info",
+          "default": "warn",
           "enum": [
             "debug",
             "info",
@@ -200,7 +188,7 @@
         },
         "autocode.maxTokens": {
           "type": "number",
-          "default": 64,
+          "default": 96,
           "description": "Maximum tokens per completion response"
         }
       }

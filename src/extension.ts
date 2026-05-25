@@ -15,8 +15,6 @@ import { AutoCodeCompletionProvider } from './providers/completion-provider';
 import { CommandHandlers } from './commands/command-handlers';
 import { PerformanceMonitor } from './performance/performance-monitor';
 import { SettingsPanel } from './settings/settings-panel';
-import { BuildAnalyzer } from './tools/build-analyzer';
-import { MultiFileCache } from './cache/multi-file-cache';
 
 let disposables: vscode.Disposable[] = [];
 
@@ -85,12 +83,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }));
 
-  // Initialize build analyzer
-  const multiFileCache = new MultiFileCache(200, 500, 30000, 300000);
-  const buildAnalyzer = new BuildAnalyzer(multiFileCache);
-  disposables.push(buildAnalyzer);
-
-  setupDocumentListeners(contextEngine, predictionEngine, eventBus);
+  setupDocumentListeners(contextEngine, eventBus);
 
   // Add completion provider disposal
   disposables.push(completionProvider);
@@ -139,10 +132,10 @@ export function deactivate(): void {
  */
 function setupDocumentListeners(
   contextEngine: ContextEngine,
-  _predictionEngine: PredictionEngine,
   eventBus: EventBus
 ): void {
   const logger = Logger.getInstance();
+  let lastTypingAt = 0;
 
   disposables.push(
     vscode.workspace.onDidSaveTextDocument((document) => {
@@ -153,28 +146,26 @@ function setupDocumentListeners(
 
   disposables.push(
     vscode.workspace.onDidChangeTextDocument((event) => {
-      eventBus.emit({ 
-        type: 'file_modified', 
-        data: { 
+      lastTypingAt = Date.now();
+      eventBus.emit({
+        type: 'file_modified',
+        data: {
           uri: event.document.uri.toString(),
-          content: event.contentChanges.length > 0 ? event.contentChanges[0].text : undefined
-        } 
+          content: event.contentChanges.length > 0 ? event.contentChanges[0].text : undefined,
+        },
       });
+
+      const editor = vscode.window.activeTextEditor;
+      if (editor && editor.document === event.document) {
+        contextEngine.warmBackgroundContext(event.document, editor.selection.active);
+      }
     })
   );
 
   disposables.push(
-    vscode.window.onDidChangeActiveTextEditor(async (editor) => {
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
       if (editor) {
-        const cts = new vscode.CancellationTokenSource();
-        setTimeout(() => cts.cancel(), 5000);
-        try {
-            await contextEngine.buildContext(editor.document, editor.selection.active, cts.token);
-        } catch (err) {
-            logger.debug('Background context update failed', err);
-        } finally {
-            cts.dispose();
-        }
+        contextEngine.warmBackgroundContext(editor.document, editor.selection.active);
       }
     })
   );
@@ -187,7 +178,15 @@ function setupDocumentListeners(
       }
 
       const config = ConfigManager.getInstance();
-      if (!config.getValue('enabled')) {return;}
+      if (!config.getValue('enabled')) {
+        return;
+      }
+
+      // Only trigger after recent typing — skip pure cursor/arrow moves
+      const sinceType = Date.now() - lastTypingAt;
+      if (sinceType > 1200) {
+        return;
+      }
 
       const debounceMs = config.getValue('debounceMs');
       selectionTimer = setTimeout(() => {
