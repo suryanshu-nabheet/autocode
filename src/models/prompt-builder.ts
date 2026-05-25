@@ -10,6 +10,7 @@ import * as vscode from 'vscode';
 import {
   ProjectContext,
   ProjectStyle,
+  DiagnosticFixTarget,
 } from '../core/types';
 import { Logger } from '../core/logger';
 import { ConfigManager } from '../core/config';
@@ -22,6 +23,10 @@ export class PromptBuilder {
    * Build a completion prompt for inline code completion
    */
   buildCompletionPrompt(context: ProjectContext): string {
+    if (context.activeFixTarget && context.completionMode === 'replace') {
+      return this.buildFixPrompt(context, context.activeFixTarget);
+    }
+
     const sections: string[] = [];
 
     // 0. System instructions
@@ -92,6 +97,47 @@ export class PromptBuilder {
     }
 
     return prompt;
+  }
+
+  buildFixPrompt(context: ProjectContext, target: DiagnosticFixTarget): string {
+    const langId = context.currentFile.file.languageId;
+    const maxLines = this.config.getValue('maxCompletionLines') || 24;
+    const start = target.range.start.line + 1;
+    const end = target.range.end.line + 1;
+
+    const before = context.currentFile.precedingLines.split('\n').slice(-12).join('\n');
+    const after = context.currentFile.followingLines.split('\n').slice(0, 12).join('\n');
+
+    const sections = [
+      `You are AutoCode FIX mode. The developer presses Tab to apply a multi-line replacement that clears syntax/type errors.`,
+      `Language: ${langId}. Return ONLY the corrected source for lines ${start}-${end} — no markdown, no explanation.`,
+      `Rules:
+- Output replaces the ENTIRE <broken_code> block (may span multiple lines).
+- Fix ALL listed errors; add missing imports/brackets/semicolons; align types with <signatures> and <related_files>.
+- Match indentation of the broken block. Up to ${maxLines} lines.`,
+    ];
+
+    if (context.diagnosticSummary) {
+      sections.push(context.diagnosticSummary);
+    }
+    if (context.resolvedDefinitions) {
+      sections.push(context.resolvedDefinitions);
+    }
+    if (context.importSuggestions) {
+      sections.push(context.importSuggestions);
+    }
+
+    sections.push(`<context_before>\n${before}\n</context_before>`);
+    sections.push(
+      `<broken_code lines="${start}-${end}">\n${target.brokenText}\n</broken_code>`
+    );
+    sections.push(
+      `<errors>\n${target.messages.map((m) => `- ${m}`).join('\n')}\n</errors>`
+    );
+    sections.push(`<context_after>\n${after}\n</context_after>`);
+    sections.push(`<replacement>`);
+
+    return sections.filter(Boolean).join('\n\n');
   }
 
   private buildSystemSection(languageId: string): string {

@@ -29,6 +29,7 @@ import { StyleAnalyzer } from '../style-learning/style-analyzer';
 import { SemanticResolver } from './semantic-resolver';
 import { ContextRanker } from './context-ranker';
 import { withTimeout } from '../utils/timeout';
+import { DiagnosticFixPlanner } from '../agentic/diagnostic-fix-planner';
 
 // Agentic Tools
 import { DiagnosticAnalyzer } from '../tools/diagnostic-analyzer';
@@ -110,7 +111,9 @@ export class ContextEngine implements vscode.Disposable {
     token: vscode.CancellationToken
   ): Promise<ProjectContext> {
     const cursorContext = this.buildCursorContext(document, position);
-    
+    const fixTarget = DiagnosticFixPlanner.getInstance().findTarget(document, position);
+    const completionMode = fixTarget ? 'replace' as const : 'insert' as const;
+
     // 1. ULTRA-FAST PATH: Same line, small movement
     if (this.lastPosition && this.lastContext) {
         const parts = this.lastPosition.split('#');
@@ -167,6 +170,8 @@ export class ContextEngine implements vscode.Disposable {
     
     const context: ProjectContext = {
       currentFile: cursorContext,
+      completionMode,
+      activeFixTarget: fixTarget ?? undefined,
       openFiles: (this.backgroundContext.openFiles || []) as FileContext[],
       relatedFiles: (this.backgroundContext.relatedFiles || []) as FileContext[],
       symbols,

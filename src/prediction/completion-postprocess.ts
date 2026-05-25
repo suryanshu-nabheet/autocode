@@ -68,10 +68,45 @@ export function postProcessCompletion(raw: string, linePrefix: string): string {
   return processed;
 }
 
+/**
+ * Model output for multi-line REPLACE (fix broken region).
+ */
+export function postProcessReplacement(raw: string, brokenText: string): string {
+  let processed = raw.replace(/<\|fim_middle\|>|<\|fim_suffix\|>|<\|fim_prefix\|>/g, '');
+  processed = processed.split('<|')[0];
+  processed = processed.replace(/^```[\w]*\n?/, '').replace(/\n?```\s*$/g, '');
+
+  const brokenTrim = brokenText.trim();
+  if (processed.trim() === brokenTrim) {
+    return '';
+  }
+
+  if (processed.includes(brokenTrim) && processed.length > brokenTrim.length * 1.2) {
+    const idx = processed.indexOf(brokenTrim);
+    if (idx === 0) {
+      processed = processed.substring(brokenTrim.length).trimStart();
+    }
+  }
+
+  const config = ConfigManager.getInstance();
+  const maxLines = Math.max(4, config.getValue('maxCompletionLines') || 24);
+  const lines = processed.split('\n');
+  if (lines.length > maxLines + 4) {
+    processed = lines.slice(0, maxLines + 4).join('\n');
+  }
+
+  processed = processed.trimEnd();
+  if (!processed || processed.length > maxLines * 150) {
+    return '';
+  }
+
+  return processed;
+}
+
 export function estimateMaxTokens(): number {
   const config = ConfigManager.getInstance();
   const lines = config.getValue('maxCompletionLines') || 24;
   const configured = config.getValue('maxTokens') || 256;
-  const fromLines = lines * 48;
-  return Math.min(1024, Math.max(configured, fromLines));
+  const fromLines = lines * 56;
+  return Math.min(1536, Math.max(configured, fromLines));
 }

@@ -15,6 +15,7 @@ import { AutoCodeCompletionProvider } from './providers/completion-provider';
 import { CommandHandlers } from './commands/command-handlers';
 import { PerformanceMonitor } from './performance/performance-monitor';
 import { SettingsPanel } from './settings/settings-panel';
+import { DiagnosticFixPlanner } from './agentic/diagnostic-fix-planner';
 
 let disposables: vscode.Disposable[] = [];
 
@@ -83,7 +84,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }));
 
-  setupDocumentListeners(contextEngine, eventBus);
+  setupDocumentListeners(contextEngine, eventBus, completionProvider);
 
   // Add completion provider disposal
   disposables.push(completionProvider);
@@ -132,10 +133,24 @@ export function deactivate(): void {
  */
 function setupDocumentListeners(
   contextEngine: ContextEngine,
-  eventBus: EventBus
+  eventBus: EventBus,
+  completionProvider: AutoCodeCompletionProvider
 ): void {
   const logger = Logger.getInstance();
   let lastTypingAt = 0;
+
+  disposables.push(
+    vscode.languages.onDidChangeDiagnostics((e) => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        return;
+      }
+      const active = editor.document.uri.toString();
+      if (e.uris.some((u) => u.toString() === active)) {
+        completionProvider.onDiagnosticsChanged(editor.document);
+      }
+    })
+  );
 
   disposables.push(
     vscode.workspace.onDidSaveTextDocument((document) => {
@@ -183,12 +198,23 @@ function setupDocumentListeners(
       }
 
       // Only trigger after recent typing — skip pure cursor/arrow moves
+      const editor = vscode.window.activeTextEditor;
+      const nearError =
+        editor &&
+        editor.document === event.textEditor.document &&
+        DiagnosticFixPlanner.getInstance().isNearDiagnostic(
+          editor.document,
+          editor.selection.active
+        );
+
       const sinceType = Date.now() - lastTypingAt;
-      if (sinceType > 1200) {
+      if (sinceType > 1200 && !nearError) {
         return;
       }
 
-      const debounceMs = config.getValue('debounceMs');
+      const debounceMs = nearError
+        ? Math.min(35, config.getValue('debounceMs'))
+        : config.getValue('debounceMs');
       selectionTimer = setTimeout(() => {
         const editor = vscode.window.activeTextEditor;
         if (editor && editor.document === event.textEditor.document && editor.selection.isEmpty) {

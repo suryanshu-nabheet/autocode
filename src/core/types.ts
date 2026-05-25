@@ -123,6 +123,20 @@ export interface ProjectContext {
   projectRelationships?: string;
   symbolUsages?: string;
   fileHistory?: string;
+  /** Multi-line replace fix (syntax/type errors), not cursor insert */
+  activeFixTarget?: DiagnosticFixTarget;
+  completionMode?: 'insert' | 'replace';
+}
+
+/**
+ * A broken code region to replace in one Tab (multi-line jump fix).
+ */
+export interface DiagnosticFixTarget {
+  range: vscode.Range;
+  brokenText: string;
+  messages: string[];
+  severity: vscode.DiagnosticSeverity;
+  priority: number;
 }
 
 /**
@@ -182,6 +196,7 @@ export interface CompletionResult {
     completionTokens?: number;
     cached: boolean;
     crossFile?: boolean;
+    mode?: 'insert' | 'replace' | 'quickfix';
   };
 }
 

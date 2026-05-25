@@ -19,7 +19,11 @@ import { ConfigManager } from '../core/config';
 import { Logger } from '../core/logger';
 import { EventBus } from '../core/event-bus';
 import { CacheManager } from '../core/cache-manager';
-import { postProcessCompletion, estimateMaxTokens } from './completion-postprocess';
+import {
+  postProcessCompletion,
+  postProcessReplacement,
+  estimateMaxTokens,
+} from './completion-postprocess';
 
 export class PredictionEngine implements vscode.Disposable {
   private config = ConfigManager.getInstance();
@@ -49,12 +53,20 @@ export class PredictionEngine implements vscode.Disposable {
     token: vscode.CancellationToken,
     onPartial?: (text: string) => void
   ): Promise<CompletionResult | null> {
+    const fixTarget = context.activeFixTarget;
+    const isReplace = context.completionMode === 'replace' && !!fixTarget;
+
     const cursorLine = document.lineAt(position.line).text;
     const linePrefix = cursorLine.substring(0, position.character);
-    
-    // 1. FAST-PATH: Immediate Cache Lookup (Sub-millisecond)
-    const cacheKey = `${document.uri.toString()}:${position.line}:${linePrefix}`;
-    const contextHash = this.cache.generateHash(context.currentFile.precedingLines);
+
+    const cacheKey = isReplace && fixTarget
+      ? `fix:${document.uri.toString()}:${fixTarget.range.start.line}:${fixTarget.range.end.line}`
+      : `${document.uri.toString()}:${position.line}:${linePrefix}`;
+
+    const contextHash = this.cache.generateHash(
+      isReplace && fixTarget ? fixTarget.brokenText : context.currentFile.precedingLines
+    );
+
     if (this.config.getValue('cacheEnabled')) {
       const cached = await this.cache.get(cacheKey, contextHash);
       if (cached) {
@@ -62,7 +74,6 @@ export class PredictionEngine implements vscode.Disposable {
       }
     }
 
-    // 2. Prompt Construction
     const prompt = this.promptBuilder.buildCompletionPrompt(context);
 
     // 3. Model Inference with Adaptive Latency Control
@@ -90,7 +101,9 @@ export class PredictionEngine implements vscode.Disposable {
             if (chunk.text) {
                 partialText += chunk.text;
                 if (onPartial) {
-                    const processed = postProcessCompletion(partialText, linePrefix);
+                    const processed = isReplace && fixTarget
+                      ? postProcessReplacement(partialText, fixTarget.brokenText)
+                      : postProcessCompletion(partialText, linePrefix);
                     if (processed) onPartial(processed);
                 }
             }
@@ -104,21 +117,24 @@ export class PredictionEngine implements vscode.Disposable {
       if (token.isCancellationRequested) return null;
 
       // 4. Post-processing
-      const completionText = postProcessCompletion(response.text, linePrefix);
+      const completionText = isReplace && fixTarget
+        ? postProcessReplacement(response.text, fixTarget.brokenText)
+        : postProcessCompletion(response.text, linePrefix);
       if (!completionText) return null;
 
       const result: CompletionResult = {
         id: Math.random().toString(36).substring(7),
         text: completionText,
         insertText: completionText,
-        range: new vscode.Range(position, position),
-        confidence: 0.95,
-        source: 'inline',
+        range: isReplace && fixTarget ? fixTarget.range : new vscode.Range(position, position),
+        confidence: isReplace ? 0.98 : 0.95,
+        source: isReplace ? 'block' : 'inline',
         metadata: {
           modelLatencyMs: response.latencyMs,
           contextTokens: response.usage.promptTokens,
           completionTokens: response.usage.completionTokens,
           cached: false,
+          mode: isReplace ? 'replace' : 'insert',
         },
       };
 

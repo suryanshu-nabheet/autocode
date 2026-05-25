@@ -15,6 +15,9 @@ import { PerformanceMonitor } from '../performance/performance-monitor';
 import { MultiFileCache } from '../cache/multi-file-cache';
 import { ProactiveSuggester } from '../prediction/proactive-suggester';
 import { SmartPrefetcher } from '../performance/smart-prefetcher';
+import { DiagnosticFixPlanner } from '../agentic/diagnostic-fix-planner';
+import { tryExtractQuickFix } from '../agentic/quick-fix-extractor';
+import { DiagnosticFixTarget } from '../core/types';
 
 /**
  * Provides inline completions for the AutoCode extension.
@@ -45,6 +48,10 @@ export class AutoCodeCompletionProvider
   } | null = null;
   /** Track in-flight background requests to prevent stacking */
   private inFlightFetches = new Map<string, AbortController>();
+  /** Instant cache for multi-line diagnostic fixes */
+  private fixCache = new Map<string, CompletionResult>();
+  private fixPlanner = DiagnosticFixPlanner.getInstance();
+  private disposables: vscode.Disposable[] = [];
 
   constructor(
     contextEngine: ContextEngine,
@@ -73,8 +80,14 @@ export class AutoCodeCompletionProvider
     } else {
       this.proactiveSuggester = { dispose: () => undefined } as ProactiveSuggester;
     }
+
+    this.disposables.push(
+      this.eventBus.on('file_modified', () => {
+        this.fixCache.clear();
+      })
+    );
   }
-  
+
   /**
    * Trigger completion at specific position (for proactive suggester)
    */
@@ -169,7 +182,18 @@ export class AutoCodeCompletionProvider
 
     this.lastPosition = position;
 
-    // Pre-warm agentic context while we check caches
+    const fixTarget = this.fixPlanner.findTarget(document, position);
+
+    if (fixTarget) {
+      const fixKey = this.fixCacheKey(document.uri.toString(), fixTarget);
+      const cachedFix = this.fixCache.get(fixKey);
+      if (cachedFix) {
+        this.currentCompletion = cachedFix;
+        this.acceptedOffset = 0;
+        return [this.createInlineItem(cachedFix, position, document)];
+      }
+    }
+
     this.contextEngine.warmBackgroundContext(document, position);
 
     // 2. ULTRA-FAST PATH: Multi-File L1 Cache (Sub-millisecond)
@@ -214,11 +238,12 @@ export class AutoCodeCompletionProvider
         }
     }
 
-    // 4. BACKGROUND TASK: Speculative Fetch with Smart Prefetcher
-    this.triggerBackgroundFetch(document, position, token, relatedFiles);
+    this.triggerBackgroundFetch(document, position, token, relatedFiles, fixTarget);
 
     // 5. USE PREFETCHED RESULT if available
-    const prefetchKey = `${uri}:${position.line}:${linePrefix}`;
+    const prefetchKey = fixTarget
+      ? this.fixCacheKey(uri, fixTarget)
+      : `${uri}:${position.line}:${linePrefix}`;
     if (this.prefetchResult && this.prefetchResult.key === prefetchKey) {
         this.logger.debug('Using speculatively prefetched result');
         const res = this.prefetchResult.result;
@@ -261,14 +286,39 @@ export class AutoCodeCompletionProvider
     return related.slice(0, 5); // Limit to 5 related files
   }
 
+  /** Prefetch fixes when squiggles update (fast Tab on errors). */
+  public onDiagnosticsChanged(document: vscode.TextDocument): void {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document !== document) {
+      return;
+    }
+
+    for (const pos of this.fixPlanner.getPrefetchPositions(document)) {
+      this.triggerBackgroundFetch(document, pos, new vscode.CancellationTokenSource().token, [], null, true);
+    }
+
+    if (this.fixPlanner.isNearDiagnostic(document, editor.selection.active)) {
+      this.scheduleSuggestRefresh();
+    }
+  }
+
+  private fixCacheKey(uri: string, target: DiagnosticFixTarget): string {
+    return `fix:${uri}:${target.range.start.line}:${target.range.end.line}`;
+  }
+
   private async triggerBackgroundFetch(
       document: vscode.TextDocument,
       position: vscode.Position,
       token: vscode.CancellationToken,
-      relatedFiles: vscode.Uri[] = []
+      relatedFiles: vscode.Uri[] = [],
+      fixTarget: DiagnosticFixTarget | null = null,
+      _silent = false
   ): Promise<void> {
       const linePrefix = document.lineAt(position.line).text.substring(0, position.character);
-      const fetchKey = `${document.uri.toString()}:${position.line}:${linePrefix}`;
+      const target = fixTarget ?? this.fixPlanner.findTarget(document, position);
+      const fetchKey = target
+        ? this.fixCacheKey(document.uri.toString(), target)
+        : `${document.uri.toString()}:${position.line}:${linePrefix}`;
 
       // Check if there's already an in-flight request for this exact position
       if (this.inFlightFetches.has(fetchKey)) {
@@ -281,7 +331,18 @@ export class AutoCodeCompletionProvider
       this.inFlightFetches.set(fetchKey, controller);
 
       try {
-          // Build context with cross-file awareness
+          if (target) {
+            const quick = await tryExtractQuickFix(document, target);
+            if (quick && !token.isCancellationRequested && !controller.signal.aborted) {
+              this.fixCache.set(fetchKey, quick);
+              this.prefetchResult = { key: fetchKey, result: quick };
+              this.currentCompletion = quick;
+              this.acceptedOffset = 0;
+              this.scheduleSuggestRefresh();
+              return;
+            }
+          }
+
           const projectContext = await this.contextEngine.buildContext(document, position, token);
           
           // Emit cross-file context loaded event
@@ -298,15 +359,19 @@ export class AutoCodeCompletionProvider
           }
 
           const completion = await this.predictionEngine.getCompletion(document, position, projectContext, token, (partialText) => {
-              // PARTIAL UPDATE: Store in cache and re-trigger
+              const partialRange =
+                projectContext.activeFixTarget?.range ?? new vscode.Range(position, position);
               const partialResult: CompletionResult = {
                   id: fetchKey,
                   text: partialText,
                   insertText: partialText,
-                  range: new vscode.Range(position, position),
+                  range: partialRange,
                   confidence: 0.5,
-                  source: 'streaming',
-                  metadata: { cached: false }
+                  source: projectContext.completionMode === 'replace' ? 'block' : 'streaming',
+                  metadata: {
+                    cached: false,
+                    mode: projectContext.completionMode === 'replace' ? 'replace' : 'insert',
+                  },
               };
               
               if (this.config.getValue('cacheEnabled')) {
@@ -328,6 +393,10 @@ export class AutoCodeCompletionProvider
               this.prefetchResult = { key: fetchKey, result: completion };
               this.currentCompletion = completion;
               this.acceptedOffset = 0;
+
+              if (completion.metadata.mode === 'replace' || completion.source === 'block') {
+                this.fixCache.set(fetchKey, completion);
+              }
 
               if (this.config.getValue('cacheEnabled')) {
                 this.multiFileCache.set(
@@ -367,7 +436,7 @@ export class AutoCodeCompletionProvider
     }
 
     const item = new vscode.InlineCompletionItem(text, range);
-    
+
     item.command = {
         title: 'Post-Acceptance Hook',
         command: 'autocode.onCompletionAccepted',
@@ -495,6 +564,7 @@ export class AutoCodeCompletionProvider
     this.acceptedOffset = 0;
     this.lastPosition = null;
     this.prefetchResult = null;
+    this.fixCache.clear();
     this.logger.info('Completion provider state cleared');
   }
   
@@ -505,6 +575,7 @@ export class AutoCodeCompletionProvider
     this.clearState();
     this.proactiveSuggester.dispose();
     this.smartPrefetcher.dispose();
+    this.disposables.forEach((d) => d.dispose());
     this.logger.info('Completion provider disposed');
   }
 
