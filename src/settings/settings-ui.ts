@@ -466,10 +466,17 @@ export function getSettingsWebviewHtml(nonce: string): string {
             </div>
             <div class="row">
               <div>
-                <div class="row-label">Max completion tokens</div>
-                <div class="row-hint">Shorter = faster model responses</div>
+                <div class="row-label">Max lines per Tab</div>
+                <div class="row-hint">How many lines one ghost suggestion can span (default 24)</div>
               </div>
-              <input type="number" class="field field-mono" id="maxTokensInput" min="16" max="256" step="8" style="width:88px;">
+              <input type="number" class="field field-mono" id="maxLinesInput" min="4" max="80" step="1" style="width:88px;">
+            </div>
+            <div class="row">
+              <div>
+                <div class="row-label">Max completion tokens</div>
+                <div class="row-hint">Raise for longer blocks; lower for speed</div>
+              </div>
+              <input type="number" class="field field-mono" id="maxTokensInput" min="64" max="1024" step="32" style="width:88px;">
             </div>
             <div class="row">
               <div>
@@ -612,6 +619,7 @@ export function getSettingsWebviewHtml(nonce: string): string {
       endpointInput: { key: 'apiEndpoint', type: 'string' },
       debounceInput: { key: 'debounceMs', type: 'number' },
       maxTokensInput: { key: 'maxTokens', type: 'number' },
+      maxLinesInput: { key: 'maxCompletionLines', type: 'number' },
       maxContextInput: { key: 'maxContextTokens', type: 'number' },
     };
 
@@ -637,7 +645,8 @@ export function getSettingsWebviewHtml(nonce: string): string {
       document.getElementById('modelInput').value = config.model || '';
       document.getElementById('endpointInput').value = config.apiEndpoint || '';
       document.getElementById('debounceInput').value = config.debounceMs ?? 80;
-      document.getElementById('maxTokensInput').value = config.maxTokens ?? 96;
+      document.getElementById('maxLinesInput').value = config.maxCompletionLines ?? 24;
+      document.getElementById('maxTokensInput').value = config.maxTokens ?? 384;
       document.getElementById('maxContextInput').value = config.maxContextTokens ?? 6144;
       document.getElementById('logLevelSelect').value = config.logLevel || 'warn';
       document.getElementById('ollamaModels').classList.toggle('hidden', config.provider !== 'ollama');

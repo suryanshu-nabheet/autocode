@@ -85,6 +85,45 @@ export class AutoCodeCompletionProvider
     vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
   }
 
+  /** After Tab-accept: immediately offer the next multi-line chunk. */
+  public chainAfterAccept(): void {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      return;
+    }
+
+    this.currentCompletion = null;
+    this.acceptedOffset = 0;
+    this.prefetchResult = null;
+
+    this.perfMonitor.recordAccepted();
+    this.eventBus.emit({
+      type: 'completion_accepted',
+      data: { id: 'tab-chain', partial: false },
+    });
+
+    this.contextEngine.warmBackgroundContext(editor.document, editor.selection.active);
+
+    if (this.config.getValue('prefetchEnabled')) {
+      this.smartPrefetcher.schedulePrefetch(
+        editor.document,
+        editor.selection.active,
+        'after_accept'
+      );
+    }
+
+    this.scheduleSuggestRefresh();
+  }
+
+  private scheduleSuggestRefresh(): void {
+    setTimeout(() => {
+      if (!this.config.getValue('enabled')) {
+        return;
+      }
+      void vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
+    }, 16);
+  }
+
   /**
    * Main entry point called by VS Code when inline completions are needed
    */
@@ -282,13 +321,14 @@ export class AutoCodeCompletionProvider
               }
 
               // Re-trigger VS Code to show the new partial text
-              vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
+              this.scheduleSuggestRefresh();
           });
 
           if (completion && !token.isCancellationRequested && !controller.signal.aborted) {
               this.prefetchResult = { key: fetchKey, result: completion };
-              
-              // Store final result in cache
+              this.currentCompletion = completion;
+              this.acceptedOffset = 0;
+
               if (this.config.getValue('cacheEnabled')) {
                 this.multiFileCache.set(
                   document.uri.toString(),
@@ -299,11 +339,12 @@ export class AutoCodeCompletionProvider
                   relatedFiles.map(f => f.toString())
                 );
               }
-              
-              // Schedule smart prefetch for next positions
+
               if (this.config.getValue('prefetchEnabled')) {
                 this.smartPrefetcher.schedulePrefetch(document, position, 'background_fetch');
               }
+
+              this.scheduleSuggestRefresh();
           }
       } catch (err) {
           this.logger.debug('Background fetch failed', err);

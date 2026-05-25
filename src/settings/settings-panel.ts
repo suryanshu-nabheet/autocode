@@ -249,7 +249,7 @@ export class SettingsPanel implements vscode.Disposable {
       maxContextTokens: config.maxContextTokens,
       debounceMs: config.debounceMs,
       prefetchEnabled: config.prefetchEnabled,
-      maxCompletionLines: config.maxCompletionLines,
+      maxCompletionLines: config.maxCompletionLines ?? 24,
       streamingEnabled: config.streamingEnabled,
       cacheEnabled: config.cacheEnabled,
       cacheTTLSeconds: config.cacheTTLSeconds,

@@ -71,9 +71,8 @@ export class CommandHandlers implements vscode.Disposable {
    * Post-acceptance hook.
    */
   private async onCompletionAccepted(completion: any): Promise<void> {
-    this.logger.debug(`Completion accepted: ${completion.id}`);
-    this.perfMonitor.recordAccepted();
-    this.completionProvider.dismiss();
+    this.logger.debug(`Completion accepted: ${completion?.id ?? 'inline'}`);
+    this.completionProvider.chainAfterAccept();
   }
 
   private register(

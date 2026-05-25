@@ -19,6 +19,7 @@ import { ConfigManager } from '../core/config';
 import { Logger } from '../core/logger';
 import { EventBus } from '../core/event-bus';
 import { CacheManager } from '../core/cache-manager';
+import { postProcessCompletion, estimateMaxTokens } from './completion-postprocess';
 
 export class PredictionEngine implements vscode.Disposable {
   private config = ConfigManager.getInstance();
@@ -68,9 +69,9 @@ export class PredictionEngine implements vscode.Disposable {
     const startTime = Date.now();
     const request: ModelRequest = {
       prompt,
-      maxTokens: Number(this.config.getValue('maxTokens')) || 64, // Use config or small default
-      temperature: 0,
-      stopSequences: ['<|fim_suffix|>', '<|file_separator|>', '\n\n', '```', 'class ', 'function ', 'export '],
+      maxTokens: estimateMaxTokens(),
+      temperature: 0.1,
+      stopSequences: ['<|fim_suffix|>', '<|file_separator|>', '```\n\n'],
       stream: this.config.getValue('streamingEnabled'),
     };
 
@@ -79,7 +80,7 @@ export class PredictionEngine implements vscode.Disposable {
       
       // RACING: Hard timeout for the entire operation to prevent user frustration
       const timeoutPromise = new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error('Generation Timeout')), 4500)
+        setTimeout(() => reject(new Error('Generation Timeout')), 12000)
       );
 
       const fetchPromise = (async () => {
@@ -89,7 +90,7 @@ export class PredictionEngine implements vscode.Disposable {
             if (chunk.text) {
                 partialText += chunk.text;
                 if (onPartial) {
-                    const processed = this.postProcess(partialText, linePrefix);
+                    const processed = postProcessCompletion(partialText, linePrefix);
                     if (processed) onPartial(processed);
                 }
             }
@@ -103,7 +104,7 @@ export class PredictionEngine implements vscode.Disposable {
       if (token.isCancellationRequested) return null;
 
       // 4. Post-processing
-      const completionText = this.postProcess(response.text, linePrefix);
+      const completionText = postProcessCompletion(response.text, linePrefix);
       if (!completionText) return null;
 
       const result: CompletionResult = {
@@ -130,36 +131,6 @@ export class PredictionEngine implements vscode.Disposable {
       this.logger.warn('Completion generation failed', err);
       return null;
     }
-  }
-
-  private postProcess(text: string, prefix: string): string {
-    let processed = text;
-    
-    // Remove model FIM markers and garbage
-    processed = processed.replace(/<\|fim_middle\|>|<\|fim_suffix\|>|<\|fim_prefix\|>/g, '');
-    
-    // If the model repeated the prefix, strip it
-    if (processed.startsWith(prefix)) {
-        processed = processed.substring(prefix.length);
-    } else if (prefix.trim() && processed.trim().startsWith(prefix.trim())) {
-        // Handle cases with different indentation/spacing
-        const trimPrefix = prefix.trim();
-        const startIdx = processed.indexOf(trimPrefix);
-        if (startIdx !== -1) {
-            processed = processed.substring(startIdx + trimPrefix.length);
-        }
-    }
-
-    // Clean up
-    processed = processed.split('<|')[0]; // Remove any other markers
-    const doubleNl = processed.search(/\n\s*\n/);
-    if (doubleNl >= 0) {
-      processed = processed.substring(0, doubleNl);
-    }
-    
-    if (processed.length === 0 || processed.length > 500) return '';
-
-    return processed;
   }
 
   clearCache(): void {

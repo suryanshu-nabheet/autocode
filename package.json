@@ -147,8 +147,8 @@
         },
         "autocode.maxCompletionLines": {
           "type": "number",
-          "default": 50,
-          "description": "Maximum number of lines in a single completion"
+          "default": 24,
+          "description": "Maximum lines per Tab completion (multi-line blocks)"
         },
         "autocode.streamingEnabled": {
           "type": "boolean",
@@ -188,8 +188,8 @@
         },
         "autocode.maxTokens": {
           "type": "number",
-          "default": 96,
-          "description": "Maximum tokens per completion response"
+          "default": 384,
+          "description": "Token budget per Tab completion (higher = longer multi-line suggestions)"
         }
       }
     }

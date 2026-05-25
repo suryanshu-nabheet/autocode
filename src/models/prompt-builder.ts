@@ -12,9 +12,11 @@ import {
   ProjectStyle,
 } from '../core/types';
 import { Logger } from '../core/logger';
+import { ConfigManager } from '../core/config';
 
 export class PromptBuilder {
   private logger = Logger.getInstance();
+  private config = ConfigManager.getInstance();
 
   /**
    * Build a completion prompt for inline code completion
@@ -104,19 +106,20 @@ export class PromptBuilder {
     };
     const langHint = langRules[languageId] || `Language: ${languageId}. Match the existing syntax and conventions.`;
 
-    return `You are AutoCode, the world's most accurate autonomous coding engine.
-Context is provided in XML tags. Use it to predict the MOST LIKELY code to follow the prefix.
+    const maxLines = this.config.getValue('maxCompletionLines') || 24;
+
+    return `You are AutoCode — an agentic tab-completion engine. The developer presses Tab repeatedly; you write the next chunk of real code each time.
 
 ${langHint}
 
-STRICT RULES:
-- Return ONLY the code to insert.
-- NO markdown, NO code blocks, NO natural language explanation.
-- Match existing indentation and style perfectly.
-- Use the provided <diagnostics>, <symbols>, and <related_files> tags to ensure 100% accuracy and avoid common bugs.
-- If errors are present in <diagnostics>, your suggestion MUST aim to fix them or be compatible with the fix.
-- STOP if you reach the next logical block or duplicate suffix code.
-- Do NOT repeat the prefix or suffix already shown in the FIM block.`;
+OUTPUT (inside <|fim_middle|>):
+- Return ONLY raw source code to insert at the cursor (no markdown fences, no prose).
+- Prefer COMPLETE multi-line chunks: full statements, entire function bodies, whole blocks — up to ${maxLines} lines when the structure requires it.
+- Use newlines freely inside your insertion; one line is only correct when the next token truly is a single line.
+- Match indentation, imports, types, and naming from <style>, <symbols>, <signatures>, and <related_files>.
+- If <diagnostics> or <project_diagnostics> list errors, your insertion MUST fix or complete code that resolves them (including cross-file imports/types).
+- Stop before duplicating any text from <|fim_suffix|> or starting a unrelated new top-level file.
+- Do NOT repeat text already in <|fim_prefix|>.`;
   }
 
   private buildStyleSection(style: ProjectStyle): string {

@@ -19,14 +19,14 @@ const DEFAULT_CONFIG: AutoCodeConfig = {
   maxContextTokens: 6144,
   debounceMs: 80,
   prefetchEnabled: true,
-  maxCompletionLines: 50,
+  maxCompletionLines: 24,
   streamingEnabled: true,
   cacheEnabled: true,
   cacheTTLSeconds: 300,
   styleLearnEnabled: true,
   telemetryEnabled: false,
   logLevel: 'warn',
-  maxTokens: 96,
+  maxTokens: 384,
 };
 
 export class ConfigManager implements vscode.Disposable {

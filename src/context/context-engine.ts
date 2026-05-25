@@ -124,7 +124,15 @@ export class ContextEngine implements vscode.Disposable {
     // 2. CRITICAL PATH (bounded latency)
     const isStale = this.lastVersion !== document.version;
     const imports = isStale ? this.importAnalyzer.analyzeImports(document) : this.cachedImports;
+    const relatedPaths = imports
+      .map((imp) => (imp.resolvedPath ? vscode.workspace.asRelativePath(vscode.Uri.file(imp.resolvedPath)) : ''))
+      .filter(Boolean);
     const diagAnalys = this.diagnosticAnalyzer.analyzeDiagnostics(document, position);
+    const projectDiags = this.diagnosticAnalyzer.analyzeProjectDiagnostics(
+      document,
+      position,
+      relatedPaths
+    );
 
     const [symbols, resolvedSignatures] = await Promise.all([
       isStale
@@ -171,7 +179,12 @@ export class ContextEngine implements vscode.Disposable {
           ? resolvedSignatures
           : ((this.backgroundContext.resolvedSignatures || []) as string[]),
       diagnostics: vscode.languages.getDiagnostics(document.uri),
-      diagnosticSummary: this.diagnosticAnalyzer.formatForPrompt(diagAnalys),
+      diagnosticSummary: [
+        this.diagnosticAnalyzer.formatForPrompt(diagAnalys),
+        this.diagnosticAnalyzer.formatProjectForPrompt(projectDiags),
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
       importSuggestions: (this.backgroundContext.importSuggestions || '') as string,
       resolvedDefinitions: (this.backgroundContext.resolvedDefinitions || '') as string,
       projectRelationships: (this.backgroundContext.projectRelationships || '') as string,
